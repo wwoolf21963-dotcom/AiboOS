@@ -109,8 +109,8 @@ body.light.lowfx .glass{--g-solid:rgba(246,246,250,.94)}
 /* ===================== status bar ===================== */
 #status{color:#fff;font-size:15px;font-weight:600;letter-spacing:-.2px;transition:color .25s}
 #status.dark{color:#000}
-.sb-l,.sb-r{position:absolute;top:0;height:var(--top);display:flex;align-items:center;justify-content:center;gap:5px;width:calc(50% - 56px)}
-.sb-l{left:0}.sb-r{right:0;gap:5px}
+.sb-l,.sb-r{position:absolute;top:0;height:var(--top);display:flex;align-items:center;gap:4px;width:calc(50% - 52px);min-width:0;white-space:nowrap}
+.sb-l{left:0;justify-content:flex-start;padding-left:12px}.sb-r{right:0;justify-content:flex-end;padding-right:12px;gap:4px}
 .sb-carrier{display:none;font-size:14px}
 body.locked .sb-time,body.cc-open .sb-time{display:none}
 body.locked .sb-carrier,body.cc-open .sb-carrier{display:inline}
@@ -125,7 +125,7 @@ body.locked .sb-carrier,body.cc-open .sb-carrier{display:inline}
 body.mic-on .sb-r::before{content:"";width:6px;height:6px;border-radius:50%;background:#ff9f0a;margin-right:2px}
 
 /* ===================== Dynamic Island ===================== */
-#island{position:absolute;left:50%;top:9px;background:#000;overflow:hidden;cursor:pointer;color:#fff;contain:layout paint style;touch-action:none;transition:opacity .25s}
+#island{position:absolute;left:50%;top:6px;background:#000;overflow:hidden;cursor:pointer;color:#fff;contain:layout paint style;touch-action:none;transition:opacity .22s;will-change:width,height,transform}
 #island.hidden{opacity:0;pointer-events:none}
 .is-c{position:absolute;inset:0;opacity:0;pointer-events:none;display:flex;align-items:center;transition:opacity .14s}
 #island.st-alert .is-alert,#island.st-live .is-live,#island.st-expanded .is-exp,#island.st-touchid .is-touch,#island.st-aibo .is-aibo{opacity:1;pointer-events:auto;transition:opacity .22s .1s}
@@ -1025,8 +1025,10 @@ iframe{touch-action:auto}
 #edgeTop{height:30px}
 /* status bar steps aside when the Dynamic Island grows, like iOS */
 .sb-l,.sb-r{transition:opacity .2s,transform .3s cubic-bezier(.3,1.2,.5,1)}
-body.isl-wide .sb-l{opacity:0;transform:translateX(-10px)}
-body.isl-wide .sb-r{opacity:0;transform:translateX(10px)}
+body.isl-wide .sb-l{opacity:0;transform:translateX(-12px);visibility:hidden}
+body.isl-wide .sb-r{opacity:0;transform:translateX(12px);visibility:hidden}
+body:not(.isl-wide) .sb-l,body:not(.isl-wide) .sb-r{visibility:visible}
+@media (prefers-reduced-motion:reduce){.sb-l,.sb-r,#island{transition:none!important}}
 #island{transform-origin:50% 0}
 
 /* ===================== AiboOS redesign: every app inherits this ===================== */
@@ -1165,7 +1167,7 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
 "use strict";
 /* ==== 01_core.js ==== */
 /* ===================== AiboOS 1.0 — core ===================== */
-const VERSION = '1.4';
+const VERSION = '1.5';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const byId = id => document.getElementById(id);
@@ -1476,7 +1478,7 @@ function perfWatch(now) {
   PW.last = now;
   if (!PW.tripped && !LOWFX && (S.perf === 'auto' || !S.perf) && PW.buf.length >= 24) {
     const s = PW.buf.slice().sort((a, b) => a - b), med = s[s.length >> 1];
-    if (med > 22) { PW.tripped = true; PERF_SLOW = true; applyTheme(); if (typeof toast === 'function') toast('Switched to Efficient mode for speed'); }
+    if (med > 22) { PW.tripped = true; PERF_SLOW = true; applyTheme(); }
   }
 }
 /* measure real frame times during boot; slow phones get the cheap glass */
@@ -1609,7 +1611,7 @@ function iconHTML(id) {
     if (ov.indexOf('emoji:') === 0) { const p = ov.slice(6).split('|'); return '<div class="ic ic-emoji" style="background:' + (p[1] || 'linear-gradient(180deg,#3a3a40,#1c1c20)') + '"><span>' + esc(p[0]) + '</span></div>'; }
     return '<div class="ic"><img src="' + ov + '" alt="" draggable="false"></div>';
   }
-  if (id === 'aibostore') return '<div class="ic ic-store"><img src="logo.png" alt="" draggable="false"><span>store</span></div>';
+  if (id === 'aibostore') return '<div class="ic ic-store"><img src="logo.svg" alt="" draggable="false"><span>store</span></div>';
   return '<div class="ic"><img src="' + iconURL(id) + '" alt="" draggable="false"></div>';
 }
 
@@ -1635,6 +1637,47 @@ const STORE = [
 ];
 const storeApp = id => STORE.find(a => a.id === id);
 
+/* Real iPhone APIs for the iOS wrapper; the native replacement OS is separate. */
+const AiboNative = {
+  available: !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.aiboNative),
+  authDone: null,
+  send(cmd, data) {
+    if (!this.available) return false;
+    try { window.webkit.messageHandlers.aiboNative.postMessage(Object.assign({cmd:cmd}, data || {})); return true; }
+    catch (e) { console.warn('Aibo bridge',e); return false; }
+  },
+  auth(fn) { this.authDone = fn; if (!this.send('touchAuth')) { this.authDone = null; fn(false); } }
+};
+window.addEventListener('aibo-native', ev => {
+  const e = ev.detail || {};
+  if (e.type === 'torch') {
+    Lock.torchOn = !!e.on;
+    const btn = byId('lock').querySelector('[data-b="torch"]');
+    if(btn) btn.classList.toggle('on',!!e.on);
+    if(e.error) toast(e.error,'!','','red');
+  } else if (e.type === 'touchResult') {
+    const fn = AiboNative.authDone;
+    AiboNative.authDone = null;
+    if(fn) fn(!!e.ok);
+    if(e.error) toast(e.error,'!','','red');
+  } else if (e.type === 'voiceReady') {
+    Aibo.nativeVoiceActive = true; Aibo.ui();
+  } else if (e.type === 'voiceText') {
+    if(Aibo.mode === 'command') {
+      Aibo.heard_(e.text || '',!!e.final);
+      if(e.final) { Aibo.nativeVoiceActive = false; Aibo.commandDone(); }
+    }
+  } else if (e.type === 'voiceStopped') {
+    Aibo.nativeVoiceActive = false;
+    if(Aibo.mode === 'command' && (Aibo.heard + Aibo.partial).trim()) Aibo.commandDone();
+    Aibo.ui();
+  } else if (e.type === 'voiceError') {
+    Aibo.nativeVoiceActive = false;
+    Aibo.mode = null;
+    if(Aibo.active) Aibo.say(e.message || 'Voice unavailable','sad');
+    toast(e.message || 'Voice unavailable','!','','red'); Aibo.ui();
+  } else if (e.type === 'camera' && e.error) toast(e.error,'!','','red');
+});
 /* ==== 07_island.js ==== */
 /* ===================== status bar ===================== */
 const BATT = { level: null, charging: false };
@@ -1677,8 +1720,8 @@ const Island = {
   dims(state) {
     const s = W / 393;
     switch (state) {
-      case 'idle': return [Math.round(126 * s), Math.round(36 * s), 18];
-      case 'live': return [Math.round(Math.min(W * .6, 250 * s)), Math.round(36 * s), 18];
+      case 'idle': return [Math.round(100 * s), Math.round(32 * s), 16];
+      case 'live': return [Math.round(Math.min(W * .56, 230 * s)), Math.round(32 * s), 16];
       case 'alert': return [Math.round(Math.min(W - 24, 300 * s + 20)), 44, 22];
       case 'expanded': return [W - 14, 168, 42];
       case 'touchid': return [106, 106, 36];
@@ -1705,7 +1748,7 @@ const Island = {
     longPress(e, '.is-live', () => { if (this.state === 'live') { this.expanded = true; this.render(); } }, 420);
     /* hold the sensor for Touch ID */
     let ht = 0;
-    e.addEventListener('pointerdown', () => { if (this.state !== 'touchid' || !this.touch || this.touch.busy) return; this.touch.busy = true; e.classList.add('scanning'); ht = setTimeout(() => { e.classList.add('matched'); playSfx('unlock'); setTimeout(() => { const t = this.touch; this.hideTouch(); t && t.ok && t.ok(); }, 520); }, 760); });
+    e.addEventListener('pointerdown', () => { if (AiboNative.available || this.state !== 'touchid' || !this.touch || this.touch.busy) return; this.touch.busy = true; e.classList.add('scanning'); ht = setTimeout(() => { e.classList.add('matched'); playSfx('unlock'); setTimeout(() => { const t = this.touch; this.hideTouch(); t && t.ok && t.ok(); }, 520); }, 760); });
     const cancel = () => { if (this.state === 'touchid' && this.touch && !e.classList.contains('matched')) { clearTimeout(ht); e.classList.remove('scanning'); this.touch.busy = false; } };
     e.addEventListener('pointerup', cancel); e.addEventListener('pointercancel', cancel); e.addEventListener('pointerleave', cancel);
     document.addEventListener('pointerdown', ev => { if (this.expanded && !e.contains(ev.target)) { this.expanded = false; this.render(); } }, true);
@@ -1725,7 +1768,7 @@ const Island = {
   render() {
     const st = this.target(), e = this.el, prev = this.state;
     e.classList.toggle('hidden', st === 'hidden');
-    if (st === 'hidden') { this.state = st; return; }
+    if (st === 'hidden') { this.state = st; document.body.classList.remove('isl-wide'); return; }
     this.state = st;
     document.body.classList.toggle('isl-wide', st === 'alert' || st === 'expanded' || st === 'aibo' || st === 'touchid');
     ['idle', 'live', 'alert', 'expanded', 'touchid', 'aibo'].forEach(k => e.classList.toggle('st-' + k, k === st));
@@ -1747,7 +1790,7 @@ const Island = {
     this.render();
     this.alertT = setTimeout(() => { this.alertData = null; this.render(); }, ms || 2200);
   },
-  showTouch(ok, label) { this.touch = { ok, busy: false }; this.el.querySelector('.it-l').textContent = label || 'Hold for Touch ID'; this.el.classList.remove('scanning', 'matched'); this.render(); },
+  showTouch(ok, label) { if(!AiboNative.available) return; this.touch = {ok,busy:true}; this.el.querySelector('.it-l').textContent=label || 'Real Touch ID'; this.el.classList.remove('scanning','matched'); this.render(); AiboNative.auth(success => { const t=this.touch; this.hideTouch(); if(success && t && t.ok) t.ok(); }); },
   hideTouch() { this.touch = null; this.el.classList.remove('scanning', 'matched'); this.render(); },
   onTap(ev) {
     if (ev.target.closest('[data-iact]')) { const b = ev.target.closest('[data-iact]'); const L = this.live[this.liveKind()]; L && L.act && L.act(b.dataset.iact); ev.stopPropagation(); return; }
@@ -1877,7 +1920,7 @@ const Lock = {
   toPass(v) {
     this.pass.style.pointerEvents = 'auto';
     this.spr = spring({ from: this.y, to: -H, velocity: v || -900, ...SPR.snappy, onUpdate: y => { this.y = y; setTf(this.pane, 0, y); const p = clamp(-y / H, 0, 1); this.pass.style.opacity = Math.min(1, p * 1.6); setTf(this.pass.firstChild, 0, (1 - p) * 60, .94 + .06 * p); } });
-    if (S.touchId) Island.showTouch(() => this.unlock(), NATIVE ? 'Hold for Touch ID' : 'Touch ID');
+    if (S.touchId && AiboNative.available) Island.showTouch(() => this.unlock(), 'Use physical Home-button Touch ID');
   },
   dragPass(dy) { const y = Math.max(0, dy); setTf(this.pass.firstChild, 0, y * .6); this.pass.style.opacity = 1 - y / H; this.y = -H + y; setTf(this.pane, 0, this.y); },
   releasePass(g) { if (g.dy > 90 || g.vy > 500) this.cancelPass(g.vy); else { setTf(this.pass.firstChild, 0, 0); this.pass.style.opacity = 1; this.spr = spring({ from: this.y, to: -H, ...SPR.snappy, onUpdate: y => { this.y = y; setTf(this.pane, 0, y); } }); } },
@@ -1942,11 +1985,12 @@ const Lock = {
   torchOn: false, torchTrack: null,
   torch(on) {
     this.torchOn = on; const t = byId('lock').querySelector('.lk-torch'), btn = byId('lock').querySelector('[data-b="torch"]');
+    if (AiboNative.available) { t.classList.remove('on'); AiboNative.send('torch',{on:!!on}); btn.classList.toggle('on',!!on); return; }
     btn.classList.toggle('on', on);
     if (this.torchTrack) { try { this.torchTrack.stop(); } catch (e) { } this.torchTrack = null; }
     if (!on) { t.classList.remove('on'); return; }
     /* real torch where the browser allows it, otherwise a full-brightness screen light */
-    const screenLight = () => { t.classList.add('on'); Island.alert('<svg viewBox="0 0 24 24" width="14"><path fill="currentColor" d="M8 2h8v4l-2 3v11a2 2 0 0 1-4 0V9L8 6z"/></svg>', 'Screen Light', 'Tap to turn off', 'yellow'); };
+    const screenLight = () => { this.torchOn=false; btn.classList.remove('on'); t.classList.remove('on'); toast('Real LED torch unavailable in browser','!','','red'); };
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(st => {
         const tr = st.getVideoTracks()[0], caps = tr.getCapabilities ? tr.getCapabilities() : {};
@@ -3003,8 +3047,8 @@ const Aibo = {
     /* "Hey Aibo" needs one touch before the microphone may start */
     document.addEventListener('pointerdown', () => { if (S.heyAibo && this.voiceIn() && !this.listening()) this.startWake(); }, true);
   },
-  voiceIn() { return !!(this.dict || this.webRec); },
-  listening() { return !!((this.dict && this.dict.active && this.dict.active()) || this.rec); },
+  voiceIn() { return !!(AiboNative.available || this.dict || this.webRec); },
+  listening() { return !!(this.nativeVoiceActive || (this.dict && this.dict.active && this.dict.active()) || this.rec); },
   bindDictation(d) {
     d.onPartial(e => this.heard_(e.text, false)); d.onFinal(e => this.heard_(e.text, true));
     d.onState(e => { if (e.state === 'idle') { if (/viewer_stopped|not_granted|unavailable/.test(e.reason || '')) { if (S.heyAibo) { S.heyAibo = false; save(); } } if (this.mode === 'command' && (this.heard + this.partial).trim()) this.commandDone(); this.oneShot = false; if (!S.heyAibo) this.mode = null; } this.ui(); });
@@ -3041,12 +3085,13 @@ const Aibo = {
   },
   listenTimeout() { clearTimeout(this.lt); this.lt = setTimeout(() => { if (this.mode === 'command' && !(this.heard + this.partial).trim()) { this.endListening(); this.say('I didn’t catch that. Tap my face to try again.', 'idle'); } }, 8000); },
   endListening() {
-    if (this.oneShot) { this.oneShot = false; if (this.dict && this.dict.active && this.dict.active()) this.stopP = this.dict.stop().catch(() => { }); if (this.rec) { try { this.rec.stop(); } catch (e) { } } }
+    if (this.oneShot) { this.oneShot = false; if(this.nativeVoiceActive) { this.nativeVoiceActive = false; AiboNative.send('voiceStop'); } if (this.dict && this.dict.active && this.dict.active()) this.stopP = this.dict.stop().catch(() => { }); if (this.rec) { try { this.rec.stop(); } catch (e) { } } }
     this.mode = (S.heyAibo && this.listening()) ? 'wake' : null; this.ui();
   },
   commandDone() { const cmd = (this.heard + ' ' + this.partial).replace(/\s+/g, ' ').trim(); this.heard = ''; this.partial = ''; clearTimeout(this.silT); clearTimeout(this.lt); this.endListening(); if (cmd) this.submit(cmd, false); },
   mic() {
     if (this.listening()) { if (this.mode === 'command') { this.commandDone(); return; } this.mode = 'command'; this.heard = ''; this.partial = ''; this.face('listen'); this.say('Listening…', 'listen'); this.listenTimeout(); return; }
+    if (AiboNative.available) { this.mode = 'command'; this.oneShot = true; this.heard = ''; this.partial = ''; this.nativeVoiceActive = true; this.say('Listening…','listen'); AiboNative.send('voiceStart'); this.listenTimeout(); this.ui(); return; }
     if (this.dict) { this.mode = 'command'; this.oneShot = true; this.heard = ''; this.partial = ''; this.face('listen'); this.say('Listening…', 'listen'); this.dict.start().catch(e => { this.oneShot = false; this.mode = null; this.say(e && e.code === 'not_granted' ? 'Microphone access is off for AiboOS. You can type instead.' : 'Couldn’t start listening. You can type instead.', 'sad'); this.ui(); }); this.listenTimeout(); this.ui(); return; }
     if (this.webRec) { this.oneShot = true; this.heard = ''; this.partial = ''; this.webStart('command'); this.face('listen'); this.say('Listening…', 'listen'); this.listenTimeout(); return; }
     try { this.inp.focus(); } catch (e) { }
@@ -3070,7 +3115,7 @@ const Aibo = {
   },
   close() {
     if (!this.active) return; this.active = false; clearTimeout(this.closeT); clearTimeout(this.silT); clearTimeout(this.lt);
-    if (this.mode === 'command') this.endListening(); this.ctl && this.ctl.abort();
+    if (this.mode === 'command') this.endListening(); AiboNative.send('stopSpeaking'); this.ctl && this.ctl.abort();
     if (this.tts && this.tts.active && this.tts.active()) this.tts.stop().catch(() => { });
     try { if (!this.tts && window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { }
     this.face('idle'); this.inp.blur(); this.inp.value = ''; Island.render();
@@ -3084,6 +3129,7 @@ const Aibo = {
     const w = this.stopP || Promise.resolve(); this.stopP = null;
     return w.then(() => {
       if (this.tts && !this.ttsDenied) return this.tts.speak(text.slice(0, 1900), { voice: S.aiboVoice || 'airy' }).catch(() => { });
+      if (AiboNative.available) { AiboNative.send('speak',{text:String(text).slice(0,1200)}); return Promise.resolve(); }
       if (!this.tts && window.speechSynthesis && window.SpeechSynthesisUtterance) return new Promise(res => { try { const u = new SpeechSynthesisUtterance(text); u.rate = 1.03; u.pitch = 1.12; u.volume = Math.min(1, (S.vol == null ? .6 : S.vol) * 1.5); u.onend = res; u.onerror = res; speechSynthesis.cancel(); speechSynthesis.speak(u); setTimeout(res, Math.min(16000, 900 + text.length * 75)); } catch (e) { res(); } });
     });
   },
@@ -3322,7 +3368,7 @@ const SetPages = {
     title: 'Settings', render(pg) {
       const r = UI.row;
       pg.c.innerHTML = UI.search('Search') +
-        '<button class="set-hero list" data-act="go:about"><span class="sh-av"><img src="logo.png" alt=""></span><span class="sh-tx"><b>' + esc(S.name) + '</b><small>AiboID ' + fmtAibo(myAibo()) + ' · AiboOS ' + VERSION + '</small></span><span class="r-ch">' + IC.chev + '</span></button>' +
+        '<button class="set-hero list" data-act="go:about"><span class="sh-av"><img src="logo.svg" alt=""></span><span class="sh-tx"><b>' + esc(S.name) + '</b><small>AiboID ' + fmtAibo(myAibo()) + ' · AiboOS ' + VERSION + '</small></span><span class="r-ch">' + IC.chev + '</span></button>' +
         UI.sec(null, [r({ icon: SYMS.flower, bg: '#ef5f7e', title: 'Customise AiboOS', sub: 'Fonts, icons, layout, wallpaper, motion', chev: 1, act: 'go:custom' }), r({ app: 'terminal', title: 'Terminal', chev: 1, act: 'app:terminal' })]) +
         UI.sec(null, [r({ icon: SYMS.air, bg: SBG.air, title: 'Aeroplane Mode', toggle: S.air, act: 't:air' }), r({ icon: SYMS.wifi, bg: SBG.wifi, title: 'Wi-Fi', value: S.wifi && !S.air ? (navigator.onLine === false ? 'Offline' : 'Connected') : 'Off', chev: 1, act: 'go:wifi' }), r({ icon: SYMS.bt, bg: SBG.bt, title: 'Bluetooth', value: S.bt && !S.air ? 'On' : 'Off', chev: 1, act: 'go:bt' }), r({ icon: CCI.data, bg: SBG.data, title: 'Mobile Data', toggle: S.data && !S.air, act: 't:data' })]) +
         UI.sec(null, [r({ icon: SYMS.bell, bg: SBG.notifs, title: 'Notifications', chev: 1, act: 'go:notifs' }), r({ icon: SYMS.vol, bg: SBG.sounds, title: 'Sounds & Haptics', chev: 1, act: 'go:sounds' }), r({ icon: SYMS.moon, bg: SBG.focus, title: 'Focus', value: S.dnd ? 'On' : '', chev: 1, act: 'go:focus' })]) +
@@ -3470,7 +3516,7 @@ function themeCards() { return '<div class="th-cards">' + Object.keys(THEMES).ma
 let ERASING = false;
 function eraseAll() {
   ERASING = true; clearTimeout(saveT);
-  const b = byId('boot'); b.style.display = 'flex'; b.style.opacity = 1; b.innerHTML = '<img class="boot-logo" src="logo.png" alt="aibo"><div class="boot-msg">Erasing…</div>';
+  const b = byId('boot'); b.style.display = 'flex'; b.style.opacity = 1; b.innerHTML = '<img class="boot-logo" src="logo.svg" alt="aibo"><div class="boot-msg">Erasing…</div>';
   try { Object.keys(localStorage).forEach(k => { if (k.indexOf('aiboos') === 0 || k === '_t') localStorage.removeItem(k); }); } catch (e) { }
   const done = () => setTimeout(() => { try { location.reload(); } catch (e) { location.href = location.href; } }, 300);
   idb().then(d => { try { d && d.close(); } catch (e) { } IDBP = null; try { const r = indexedDB.deleteDatabase('aiboos'); r.onsuccess = r.onerror = r.onblocked = done; } catch (e) { done(); } setTimeout(done, 2500); });
@@ -4160,6 +4206,7 @@ defineApp('camera', {
     const thumb = () => loadPhotos().then(l => { const p = l.filter(x => x.type !== 'video').slice(-1)[0] || l.slice(-1)[0]; const t = w.body.querySelector('.cam-th'); t.style.backgroundImage = p && p.type !== 'video' ? 'url(' + thumbURL(p) + ')' : ''; });
     const fallback = why => { msg.hidden = false; msg.innerHTML = '<b>' + esc(why) + '</b><span>You can still take a photo with your device’s camera and it’s saved to Photos.</span><button class="btn-g press" data-c="native">Take Photo</button>'; };
     C.start = () => {
+      if(AiboNative.available) { msg.hidden = false; msg.innerHTML='<b>iPhone Camera</b><span>Use the real camera. Photos are saved to iOS Photos.</span><button class="btn-g press" data-c="native">Open Camera</button>'; if(!C.nativeOpened) { C.nativeOpened=true; AiboNative.send('camera'); } return; }
       if (C.stream) return;
       if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return fallback('Live camera isn’t available here');
       navigator.mediaDevices.getUserMedia({ video: { facingMode: C.facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: C.mode === 'video' }).then(st => { C.stream = st; v.srcObject = st; v.play().catch(() => { }); msg.hidden = true; v.style.transform = C.facing === 'user' ? 'scaleX(-1) scale(' + C.zoom + ')' : 'scale(' + C.zoom + ')'; }).catch(e => fallback(e && e.name === 'NotAllowedError' ? 'Camera access is off' : 'Live camera isn’t available here'));
@@ -4191,7 +4238,7 @@ defineApp('camera', {
       const c = b.dataset.c;
       if (c === 'timer') { C.timer = C.timer === 0 ? 3 : C.timer === 3 ? 10 : 0; b.querySelector('small').textContent = C.timer ? C.timer + 's' : ''; b.classList.toggle('on', !!C.timer); }
       if (c === 'flash') { C.flash = !C.flash; b.classList.toggle('on', C.flash); const tr = C.stream && C.stream.getVideoTracks()[0]; const caps = tr && tr.getCapabilities ? tr.getCapabilities() : {}; if (caps.torch) tr.applyConstraints({ advanced: [{ torch: C.flash }] }).catch(() => { }); else if (C.flash) toast('This camera has no flash control', '!', '', 'yellow'); }
-      if (c === 'native') pickFile('image/*', { capture: 'environment' }).then(f => f[0] && addPhoto(f[0]).then(() => { thumb(); toast('Saved to Photos'); }));
+      if (c === 'native') { if(AiboNative.available) AiboNative.send('camera'); else pickFile('image/*', { capture: 'environment' }).then(f => f[0] && addPhoto(f[0]).then(() => { thumb(); toast('Saved to Photos'); })); }
     });
     thumb(); C.start();
   },
@@ -4939,10 +4986,10 @@ const HELLOS = ['hello', 'bonjour', 'hola', 'ciao', 'hallo', 'olá', 'こんに�
 const LANGS = ['English (UK)', 'English (US)', 'Français', 'Español', 'Deutsch', 'Italiano', 'Português', '日本語', '中文', '한국어'];
 function bootScreen() {
   const b = byId('boot');
-  b.innerHTML = '<img class="boot-logo" src="logo.png" alt="aibo"><div class="boot-bar"><i></i></div><div class="boot-ver">AiboOS ' + VERSION + '</div>';
+  b.innerHTML = '<img class="boot-logo" src="logo.svg" alt="aibo"><div class="boot-bar"><i></i></div><div class="boot-ver">AiboOS ' + VERSION + '</div>';
   const bar = b.querySelector('.boot-bar i');
   return new Promise(res => {
-    const t0 = performance.now(), dur = 1500;
+    const t0 = performance.now(), dur = 1000;
     const f = now => { const p = clamp((now - t0) / dur, 0, 1); bar.style.transform = 'scaleX(' + (1 - Math.pow(1 - p, 2)).toFixed(4) + ')'; if (p < 1) requestAnimationFrame(f); else res(); };
     requestAnimationFrame(f);
   });
@@ -4952,7 +4999,7 @@ const Setup = {
   start() {
     const b = byId('boot'); b.innerHTML = '<div class="su"><div class="su-track"></div></div>'; b.style.background = '#000';
     this.track = b.querySelector('.su-track'); statusStyle(false);
-    this.steps = ['hello', 'lang', 'net', 'pass', 'touch', 'theme', 'appear', 'glass', 'aibo', 'update', 'welcome'];
+    this.steps = ['hello', 'lang', 'net', 'pass', 'touch', 'theme', 'appear', 'glass', 'aibo', 'welcome'];
     this.show(0, true);
   },
   page(k) {
@@ -4963,13 +5010,13 @@ const Setup = {
       case 'lang': return '<div class="su-p">' + head('', 'Language', 'Choose the language AiboOS uses.') + '<div class="su-list list">' + LANGS.map(l => '<button class="row' + (S.lang === l ? ' on' : '') + '" data-lang="' + esc(l) + '"><span class="r-tx"><span class="r-t">' + esc(l) + '</span></span><span class="r-ck">' + IC.check + '</span></button>').join('') + '</div>' + foot() + '</div>';
       case 'net': { const c = navigator.connection; return '<div class="su-p">' + head('<span class="su-ic blue">' + SYMS.wifi + '</span>', 'Connect to the Internet', 'AiboOS uses the connection of the phone it’s running on.') + '<div class="su-list list"><div class="row"><span class="r-tx"><span class="r-t">' + (navigator.onLine === false ? 'Offline' : 'Connected') + '</span><span class="r-s">' + (c && c.effectiveType ? 'Speed class ' + c.effectiveType.toUpperCase() : 'Through this device') + '</span></span>' + (navigator.onLine === false ? '' : '<span class="tint">' + IC.check + '</span>') + '</div></div><p class="su-note">This is read live. You can still set up AiboOS offline.</p>' + foot() + '</div>'; }
       case 'pass': return '<div class="su-p su-pass"><div class="su-pp"></div><div class="su-foot"><button class="su-link" data-su="nopass">Don’t Use a Passcode</button></div></div>';
-      case 'touch': return '<div class="su-p">' + head('', 'Touch ID', S.passcode ? 'Hold your finger on the sensor until the print fills in.' : 'Touch ID needs a passcode, so it’s off for now.') + (S.passcode ? '<div class="su-fp"><button class="su-fpb" aria-label="Touch ID sensor">' + FP_SVG + '</button><small class="su-fpt">Hold the sensor</small></div>' : '') + foot(S.passcode ? 'Set Up Later' : 'Continue') + '</div>';
+      case 'touch': return '<div class="su-p">' + head('', 'Touch ID', AiboNative.available ? 'Use the physical iPhone SE Touch ID sensor. Your fingerprints must already be registered in iPhone Settings.' : 'Touch ID requires a hardware driver in a future native AiboOS. This browser prototype cannot enroll fingerprints.') + '<div class="su-fp">' + FP_SVG + '<small class="su-fpt">Real fingerprints only — no simulated enrollment</small></div>' + foot('Continue') + '</div>';
       case 'theme': return '<div class="su-p">' + head('', 'Choose a Look', 'Every part of it can be changed later in Settings › Customise.') + themeCards() + foot() + '</div>';
       case 'appear': return '<div class="su-p">' + head('', 'Appearance', 'Light or Dark. You can change this any time in Settings.') + '<div class="appear su-ap"><button data-ap="light" class="' + (S.theme === 'light' ? 'on' : '') + '"><span class="ap-ph light"><i></i><i></i></span>Light<span class="ap-ck"></span></button><button data-ap="dark" class="' + (S.theme !== 'light' ? 'on' : '') + '"><span class="ap-ph dark"><i></i><i></i></span>Dark<span class="ap-ck"></span></button></div>' + foot() + '</div>';
       case 'glass': return '<div class="su-p su-glass">' + head('', 'Liquid Glass', 'New in AiboOS 1.0: choose how see-through buttons, bars and panels are.') + '<div class="su-gprev"><div class="su-gw"></div><div class="su-gpill glass"><span>' + IC.search + '</span>Search</div><div class="su-gdock glass">' + ['phone', 'messages', 'aibobrowser', 'camera'].map(a => iconHTML(a)).join('') + '</div></div><div class="row sl-row su-gs"><span class="sl-a">Clear</span><input type="range" class="rng" min="0" max="100" value="' + S.glass + '"><span class="sl-a">Tinted</span></div>' + foot() + '</div>';
       case 'aibo': return '<div class="su-p">' + head('<span class="ai-face big"><i></i><i></i></span>', 'Meet Aibo', 'Tap the Dynamic Island and Aibo’s face appears. Ask it to set timers, add reminders, play music, message people or change settings.') + (Aibo.voiceIn() ? '<div class="su-list list">' + UI.row({ title: 'Listen for “Hey Aibo”', toggle: !!S.heyAibo, act: 'wake' }) + '</div>' : '<p class="su-note">Voice isn’t available here, so you’ll type to Aibo. Voice works in Chrome and the Claude desktop app.</p>') + foot() + '</div>';
       case 'update': return '<div class="su-p">' + head('<span class="su-ic gray">' + SYMS.gear + '</span>', 'Software Update', '') + '<div class="upd su-upd"><b>AiboOS ' + VERSION + '</b><span>AiboOS is up to date</span></div>' + foot() + '</div>';
-      case 'welcome': return '<div class="su-p su-welcome"><img class="su-logo" src="logo.png" alt="aibo"><h1>Welcome to AiboOS</h1><div class="su-swipe"><span>Swipe up to get started</span><i></i></div></div>';
+      case 'welcome': return '<div class="su-p su-welcome"><img class="su-logo" src="logo.svg" alt="aibo"><h1>Welcome to AiboOS</h1><div class="su-swipe"><span>Swipe up to get started</span><i></i></div></div>';
     }
   },
   show(i, first) {
@@ -4993,12 +5040,7 @@ const Setup = {
       p.querySelector('.su-pp').appendChild(pad);
       on(p, 'click', '[data-su="nopass"]', () => Alert.show({ host: byId('boot'), title: 'Are you sure?', msg: 'Without a passcode, anyone can open AiboOS.', buttons: [{ t: 'Cancel' }, { t: 'Don’t Use', red: true, fn: () => { S.passcode = ''; save(); this.next(); } }] }));
     }
-    if (k === 'touch' && S.passcode) {
-      const b = p.querySelector('.su-fpb'), t = p.querySelector('.su-fpt'); let n = 0, tm = 0;
-      const paths = $$('path', b);
-      b.addEventListener('pointerdown', () => { b.classList.add('scanning'); tm = setTimeout(() => { n++; paths.forEach((x, k2) => x.classList.toggle('lit', k2 < Math.round(paths.length * n / 3))); tone(1200 + n * 200, .08, 'sine', .03); t.textContent = n >= 3 ? 'Touch ID is ready' : 'Lift, then hold again (' + n + ' of 3)'; if (n >= 3) { S.touchId = true; save(); b.classList.add('done'); p.querySelector('[data-su="next"]').textContent = 'Continue'; } }, 650); });
-      const up = () => { clearTimeout(tm); b.classList.remove('scanning'); }; b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up);
-    }
+    if (k === 'touch') { S.touchId = !!(S.passcode && AiboNative.available); save(); }
     if (k === 'theme') on(p, 'click', '[data-th]', (e, b) => { applyThemePreset(b.dataset.th); $$('[data-th]', p).forEach(x => x.classList.toggle('on', x === b)); });
     if (k === 'appear') on(p, 'click', '[data-ap]', (e, b) => { S.theme = b.dataset.ap; applyTheme(); $$('[data-ap]', p).forEach(x => x.classList.toggle('on', x === b)); });
     if (k === 'glass') { const r = p.querySelector('.rng'); p.querySelector('.su-gw').style.backgroundImage = 'url(' + WALL_URL + ')'; r.addEventListener('input', () => { S.glass = +r.value; applyTheme(); }); }
@@ -5057,7 +5099,7 @@ async function boot() {
   layoutScreen(); applyTheme();
   Island.init(); Lock.init(); Home.init(); CC.init(); Aibo.init(); bindTopEdge(); bindHardware();
   renderStatus();
-  const perf = measurePerf(1300);
+  const perf = measurePerf(650);
   const wall = buildWallpaper();
   await bootScreen();
   PERF_STAT = await perf; await wall; applyTheme(); applyCustom();
@@ -5094,7 +5136,7 @@ const AppLock = {
     const pad = g.querySelector('.al-pad'), sub = g.querySelector('.al-sub');
     const usePass = () => { Island.hideTouch(); pad.innerHTML = ''; sub.textContent = 'Enter your passcode'; pad.appendChild(PassPad({ steps: [{ title: '', check: S.passcode, len: S.passcode.length }], done: () => finish(true) })); };
     g.querySelector('.al-cancel').onclick = () => finish(false);
-    if (S.touchId && S.passcode) { sub.textContent = 'Hold the sensor to open'; pad.innerHTML = '<button class="btn-g press al-usepass">Enter Passcode</button>'; pad.querySelector('.al-usepass').onclick = usePass; Island.showTouch(() => finish(true), 'Hold for Touch ID'); }
+    if (S.touchId && S.passcode && AiboNative.available) { sub.textContent = 'Use real Touch ID on the Home button'; pad.innerHTML = '<button class="btn-g press al-usepass">Enter Passcode</button>'; pad.querySelector('.al-usepass').onclick = usePass; Island.showTouch(() => finish(true), 'Hold for Touch ID'); }
     else usePass();
   }
 };
