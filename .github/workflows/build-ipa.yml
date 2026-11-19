@@ -16,6 +16,19 @@ jobs:
         run: brew install xcodegen
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
+      - name: Check AiboOS JavaScript
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('AiboOS/Web/index.html').read_text()
+          match = re.search(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.DOTALL)
+          if not match:
+              raise SystemExit('No AiboOS script found')
+          Path('/tmp/aiboos.js').write_text(match.group(1))
+          print('JavaScript extracted:', len(match.group(1)), 'characters')
+          PY
+          node --check /tmp/aiboos.js
       - name: Compile AiboOS for physical iPhone SE
         run: |
           set -euo pipefail
