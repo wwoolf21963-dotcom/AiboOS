@@ -1,0 +1,35 @@
+name: Build AiboOS IPA for TrollStore
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate --spec project.yml
+      - name: Compile for iPhone SE
+        run: |
+          xcodebuild -project AiboOS.xcodeproj -scheme AiboOS -configuration Release -sdk iphoneos -derivedDataPath "$RUNNER_TEMP/build" CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/build/Build/Products/Release-iphoneos/AiboOS.app" "$RUNNER_TEMP/ipa/Payload/AiboOS.app"
+          test -f "$RUNNER_TEMP/ipa/Payload/AiboOS.app/AiboOS"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$GITHUB_WORKSPACE/AiboOS_SE_TrollStore.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/AiboOS_SE_TrollStore.ipa"
+      - name: Publish build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-SE-TrollStore-IPA
+          path: AiboOS_SE_TrollStore.ipa
+          if-no-files-found: error
