@@ -3,8 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -12,13 +14,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate project
+      - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
-      - name: Compile for iPhone SE
+      - name: Compile AiboOS for physical iPhone SE
         run: |
+          set -euo pipefail
           xcodebuild -project AiboOS.xcodeproj -scheme AiboOS -configuration Release -sdk iphoneos -derivedDataPath "$RUNNER_TEMP/build" CODE_SIGNING_ALLOWED=NO build
-      - name: Package IPA
-        shell: bash
+      - name: Package unsigned TrollStore IPA
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
@@ -27,9 +29,19 @@ jobs:
           cd "$RUNNER_TEMP/ipa"
           zip -qry "$GITHUB_WORKSPACE/AiboOS_SE_TrollStore.ipa" Payload
           unzip -t "$GITHUB_WORKSPACE/AiboOS_SE_TrollStore.ipa"
-      - name: Publish build artifact
+      - name: Save Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: AiboOS-SE-TrollStore-IPA
           path: AiboOS_SE_TrollStore.ipa
           if-no-files-found: error
+      - name: Publish direct IPA to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view aiboos-se-latest >/dev/null 2>&1; then
+            gh release upload aiboos-se-latest AiboOS_SE_TrollStore.ipa --clobber
+          else
+            gh release create aiboos-se-latest AiboOS_SE_TrollStore.ipa --target "$GITHUB_SHA" --title "AiboOS SE - TrollStore beta" --notes "AiboOS runs as an iOS app on iPhone SE (2016), iOS 15+. It does not replace iOS, and Android APK execution is not supported. Experimental unsigned build, not yet verified on device." --prerelease
+          fi
