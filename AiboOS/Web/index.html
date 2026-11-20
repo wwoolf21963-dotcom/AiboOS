@@ -1167,7 +1167,7 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
 "use strict";
 /* ==== 01_core.js ==== */
 /* ===================== AiboOS 1.0 — core ===================== */
-const VERSION = '1.7';
+const VERSION = '1.8';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const byId = id => document.getElementById(id);
@@ -1195,7 +1195,7 @@ const DEFAULTS = {
   installed: ['phone', 'messages', 'aibobrowser'].concat(APP_ORDER), names: {}, icons: {}, badges: {}, searchPill: true,
   notifs: [], notifAllow: {}, recents: [],
   notes: [], reminders: [], events: [], contacts: [], calls: [], alarms: [], worldClocks: ['Europe/London', 'America/New_York', 'Asia/Tokyo'],
-  aiboId: '', aiboName: '', aiboPhoto: '', aiboRelayURL: '', cloudReceiptSince: 0, remoteProfiles: {}, faceUnlock: false, localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
+  aiboId: '', aiboName: '', aiboPhoto: '', aiboRelayURL: 'https://aibomesgsystem.wwoolf21963.workers.dev', cloudReceiptSince: 0, remoteProfiles: {}, faceUnlock: false, localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
   fitness: [], savedImgs: [], tf: { best: 0 }, browserHome: [],
   font: 'system', iconShape: 'squircle', iconSize: 'medium', cols: 4, labels: true, wallDim: 0, lockColor: '', animSpeed: 'normal', battPct: false, termHist: [],
   autoLock: 120, lockOnExit: false, eraseOnFail: false, lockedApps: [], failCount: 0, storeRegion: 'GB', appColours: true, dockMax: 4, cardRadius: 24, iconStyle: 'default', islandIdle: 'pill', webApps: []
@@ -3463,7 +3463,7 @@ const SetPages = {
   focus: () => ({ title: 'Focus', render(pg) { pg.c.innerHTML = UI.sec(null, [UI.row({ icon: SYMS.moon, bg: SBG.focus, title: 'Do Not Disturb', toggle: S.dnd, act: 't:dnd' })], 'Banners and sounds are silenced. Notifications still collect quietly in Notification Centre.'); }, act: setAct }),
   general: () => ({ title: 'General', render(pg) { pg.c.innerHTML = UI.sec(null, [UI.row({ title: 'Install on This Phone', sub: 'Add to Home Screen · works offline', chev: 1, act: 'go:install' })]) + UI.sec(null, [UI.row({ title: 'About', chev: 1, act: 'go:about' }), UI.row({ title: 'Software Update', chev: 1, act: 'go:update' })]) + UI.sec(null, [UI.row({ title: 'iPhone Storage', chev: 1, act: 'go:storage' }), UI.row({ title: 'Date & Time', chev: 1, act: 'go:datetime' })]) + UI.sec(null, [UI.row({ title: 'Erase All Content and Settings', red: true, act: 'go:reset' })]); }, act: setAct }),
   about: () => ({ title: 'About', render(pg) {
-    pg.c.innerHTML = UI.sec(null, [UI.row({ title: 'Name', value: esc(S.name), chev: 1, act: 'rename' }), UI.row({ title: 'AiboOS Version', value: VERSION, tag: 'div' }), UI.row({ title: 'Running On', value: esc(uaDevice()), tag: 'div' }), UI.row({ title: 'Screen', value: W + ' × ' + H + ' pt', tag: 'div' }), UI.row({ title: 'Graphics', value: LOWFX ? 'Efficient' : 'Full Liquid Glass', tag: 'div' })]) + UI.sec(null, [UI.row({ title: 'AiboID', value: fmtAibo(myAibo()), tag: 'div' }), UI.row({ title: 'Messages', value: AIBODB ? 'Online' : 'This device only', tag: 'div' })]) + UI.sec(null, [UI.row({ title: 'Storage Used', value: '<span class="st-u">…</span>', tag: 'div' })], '“aibo” and the aibo logo are trademarks of Sony Group Corporation. AiboOS is an independent fan project.');
+    pg.c.innerHTML = UI.sec(null, [UI.row({ title: 'Name', value: esc(S.name), chev: 1, act: 'rename' }), UI.row({ title: 'AiboOS Version', value: VERSION, tag: 'div' }), UI.row({ title: 'Running On', value: esc(uaDevice()), tag: 'div' }), UI.row({ title: 'Screen', value: W + ' × ' + H + ' pt', tag: 'div' }), UI.row({ title: 'Graphics', value: LOWFX ? 'Efficient' : 'Full Liquid Glass', tag: 'div' })]) + UI.sec(null, [UI.row({ title: 'AiboID', value: fmtAibo(myAibo()), tag: 'div' }), UI.row({ title: 'Messages', value: AiboCloud.ready ? 'Online' : 'Service Offline', tag: 'div' })]) + UI.sec(null, [UI.row({ title: 'Storage Used', value: '<span class="st-u">…</span>', tag: 'div' })], '“aibo” and the aibo logo are trademarks of Sony Group Corporation. AiboOS is an independent fan project.');
     if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => { const u = pg.c.querySelector('.st-u'); if (u) u.textContent = bytes(e.usage) + ' of ' + bytes(e.quota); }).catch(() => { });
     else pg.c.querySelector('.st-u').textContent = 'Not shared by this browser';
   }, act: setAct }),
@@ -3714,14 +3714,18 @@ function contactEdit(id, done, deleted) {
 defineApp('contacts', { launch(w) { w.nav = new Nav(w.body, contactsPage()); Bus.on('contacts:show', id => { w.nav.popTo(0); w.nav.push(contactPage(id), false); }); } });
 
 
-/* AiboOS Internet Messaging. Uses HTTPS + Wi-Fi OR cellular, not local peer discovery.
-   No public relay is configured by default; do not claim remote messages were sent
-   until the HTTPS server confirms receiving them. Messages are NOT end-to-end encrypted. */
+/* AiboOS Internet Messaging uses a managed HTTPS Worker over Wi-Fi or cellular.
+   A published Worker alone is not enough: its D1 database must be configured.
+   No success or delivery is claimed until the server responds. Not E2EE. */
+const AIBO_RELAY_URL = 'https://aibomesgsystem.wwoolf21963.workers.dev';
 const AiboCloud = {
   endpoint: '', ready: false, starting: false, syncBusy: false,
   init() {
-    this.endpoint = String(S.aiboRelayURL || '').replace(/\/+$/, '');
-    if (this.endpoint) this.register();
+    this.endpoint = AIBO_RELAY_URL;
+    if (S.aiboRelayURL !== AIBO_RELAY_URL) {
+      S.aiboRelayURL = AIBO_RELAY_URL; save();
+    }
+    this.register();
     setInterval(() => {
       if (!this.endpoint || document.hidden || navigator.onLine === false) return;
       if (this.ready) this.sync();
@@ -3742,20 +3746,8 @@ const AiboCloud = {
     try {localStorage.setItem('aiboos-cloud-device-key', key);} catch(e) {throw Error('This browser cannot save the Aibo ID device key');}
     return key;
   },
-  setEndpoint(address) {
-    const trimmed = String(address || '').trim();
-    if (!trimmed) {
-      this.endpoint = ''; this.ready = false; S.aiboRelayURL = ''; save();
-      Bus.emit('cloud:status'); Bus.emit('threads'); return;
-    }
-    let url;
-    try { url = new URL(trimmed); } catch(e) {throw Error('Enter a full https:// internet relay URL');}
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
-      throw Error('The internet relay URL must use HTTPS');
-    this.endpoint = url.origin + url.pathname.replace(/\/+$/, '');
-    this.ready = false; S.aiboRelayURL = this.endpoint; S.cloudReceiptSince = 0; save();
-    Bus.emit('cloud:status');
-    this.register();
+  setEndpoint() {
+    throw Error('AiboOS manages the internet relay automatically');
   },
   async request(path,method='GET',payload) {
     if (!this.endpoint) throw Error('Internet relay not configured');
@@ -3768,16 +3760,25 @@ const AiboCloud = {
         signal:controller.signal
       });
       const data = await response.json();
-      if(!response.ok) throw Error(String(data.error || ('Relay error '+response.status)));
+      if(!response.ok) {
+        const err = Error(String(data.error || ('Relay error '+response.status)));
+        err.status = response.status;
+        throw err;
+      }
       return data;
     } catch(e) {
-      if(e.name==='AbortError') throw Error('Internet relay request timed out');
-      throw e;
+      const error = e.name==='AbortError' ? Error('Internet relay request timed out') : e;
+      if(this.ready && (!error.status || error.status>=500 || error.status===429)) {
+        this.ready=false; this.error=error.message || 'Service Offline';
+        Bus.emit('cloud:status'); Bus.emit('threads');
+      }
+      throw error;
     } finally {clearTimeout(timeout);}
   },
   async register() {
     if (!this.endpoint || this.starting) return;
     this.starting = true;
+    Bus.emit('cloud:status');
     try {
       const original = myAibo();
       const data = await this.request('/v1/register','POST',{
@@ -3875,18 +3876,17 @@ const AiboCloud = {
       this.error='';
     }catch(e){
       this.error=e.message||'Could not check internet messages';
-      Bus.emit('cloud:status');
-      // Re-register after transport errors on the next timer tick.
-      if(/not registered|401/.test(this.error))this.ready=false;
+      this.ready=false;
+      Bus.emit('cloud:status'); Bus.emit('threads');
+      // The retry timer will register again when connectivity returns.
     }finally{this.syncBusy=false;}
   }
 };
 function aiboCloudSettings(after){
-  const box=el('<div class="ce"><p class="aibo-cloud-note">Worldwide Aibo Messages works through a hosted Internet relay. It can use Wi-Fi or mobile data. Messages are NOT end-to-end encrypted in this beta.</p><div class="list"><input class="ce-in cloud-url" type="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://your-relay.workers.dev" value="'+esc(S.aiboRelayURL||'')+'"></div><p class="aibo-cloud-note">Both people need accounts on the same relay. AiboOS will show real profiles and delivery status. A server must be deployed before worldwide messages can work.</p><button class="as-sm cloud-off">Disconnect relay</button></div>');
-  on(box,'click','.cloud-off',()=>{AiboCloud.setEndpoint('');toast('Internet relay disconnected');h.close();if(after)after();});
-  const h=Sheet.open({title:'Internet Messaging',content:box,done:'Connect',detent:'large',onDone:()=>{
-    try{AiboCloud.setEndpoint(box.querySelector('.cloud-url').value);toast('Checking internet relay…');if(after)after();}
-    catch(e){toast(e.message,'!','','red');return false;}
+  const status = AiboCloud.ready ? 'Online — Wi-Fi and mobile data' : AiboCloud.starting ? 'Connecting…' : 'Service Offline';
+  const box=el('<div class="ce"><p class="aibo-cloud-note">AiboOS Internet Messaging is always enabled and automatically connects over Wi-Fi or mobile data. The server cannot be changed inside AiboOS.</p><div class="list"><div class="aibo-cloud-note"><b>'+esc(status)+'</b><p>'+esc(AIBO_RELAY_URL)+'</p></div></div><p class="aibo-cloud-note">If Service Offline appears, messages will retry when the relay works again. The Cloudflare Worker also needs a D1 database. This beta is NOT end-to-end encrypted.</p></div>');
+  Sheet.open({title:'Internet Messaging',content:box,done:'Retry Connection',detent:'large',onDone:()=>{
+    AiboCloud.register(); if(after)after();
   }});
 }
 
@@ -4026,7 +4026,7 @@ function threadsPage() {
     title: 'Messages', right: [{ icon: '<svg viewBox="0 0 20 20" width="18"><path d="M13.5 3.5l3 3L7 16H4v-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', label: 'New Message', act: (b, pg) => newMessage(pg) }],
     render(pg) {
       const T = allThreads();
-      pg.c.innerHTML = UI.search('Search') + '<button class="aibo-profile-row list" data-act="profile">' + avatarHTML({first:aiboProfileName(),photo:S.aiboPhoto||''},50) + '<span><b>'+esc(aiboProfileName())+'</b><small>Edit name / photo · AiboID '+fmtAibo(myAibo())+'</small></span><span>›</span></button>' + '<button class="aibo-cloud-card list" data-act="cloud"><b>🌐 Internet Messaging</b><small>'+ (AiboCloud.endpoint ? (AiboCloud.ready?'Connected — Wi-Fi and mobile data':'Not connected — tap to check settings'):'Set up worldwide Aibo Messages') +'</small></button><div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AIBODB || AiboNative.available ? 'on' : '') + '">' + (AIBODB ? 'Online' : AiboNative.available ? 'Nearby Wi-Fi' : DB_STATE === 'connecting' ? 'Connecting…' : 'This device only') + '</span></div>' +
+      pg.c.innerHTML = UI.search('Search') + '<button class="aibo-profile-row list" data-act="profile">' + avatarHTML({first:aiboProfileName(),photo:S.aiboPhoto||''},50) + '<span><b>'+esc(aiboProfileName())+'</b><small>Edit name / photo · AiboID '+fmtAibo(myAibo())+'</small></span><span>›</span></button>' + '<button class="aibo-cloud-card list" data-act="cloud"><b>🌐 Internet Messaging</b><small>'+ (AiboCloud.ready?'Connected — Wi-Fi and mobile data':AiboCloud.starting?'Connecting…':'Service Offline') +'</small></button><div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AiboCloud.ready ? 'on' : '') + '">' + (AiboCloud.ready ? 'Online' : AiboCloud.starting ? 'Connecting…' : 'Service Offline') + '</span></div>' +
         (T.length ? '<div class="th-list">' + T.map(t => { const c = contactByAibo(t['with']); return '<button class="th" data-act="t:' + t['with'] + '">' + aiboPeerAvatar(t['with'], 46) + '<span class="th-tx"><span class="th-h"><b>' + esc(aiboPeerName(t['with'])) + '</b><i>' + ago(t.ts || Date.now()) + '</i></span><span class="th-b">' + esc(t.last || '') + '</span></span></button>'; }).join('') + '</div>' : UI.empty('<svg viewBox="0 0 24 24" width="40"><path fill="currentColor" d="M12 4C6.9 4 3 7.3 3 11.3c0 2.3 1.3 4.4 3.4 5.7-.2 1.2-.9 2.3-1.8 3 1.8.1 3.5-.5 4.8-1.5.8.2 1.7.3 2.6.3 5.1 0 9-3.3 9-7.5S17.1 4 12 4z"/></svg>', 'No Messages', 'Share your AiboID. Anyone who enters it can message you.'));
       const inp = pg.c.querySelector('.srch input'); inp.addEventListener('input', () => { const q = inp.value.toLowerCase(); $$('.th', pg.c).forEach(r => r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'); });
     },
@@ -4035,7 +4035,7 @@ function threadsPage() {
 }
 function newMessage(pg) {
   const contacts=(S.contacts||[]).filter(c=>c.aibo);
-  const body=el('<div class="nm"><p class="aibo-cloud-note">Search an AiboID to find its name and optional profile picture anywhere over Wi-Fi or mobile data.</p><div class="list"><input class="ce-in nm-in" inputmode="numeric" maxlength="8" placeholder="AiboID (7 digits)"></div><div class="aibo-find-result" aria-live="polite">Enter a 7-digit AiboID to search.</div><button class="as-sm aibo-relay-settings" data-cloud="setup">Internet Messaging Settings</button>' +
+  const body=el('<div class="nm"><p class="aibo-cloud-note">Search an AiboID to find its name and optional profile picture anywhere over Wi-Fi or mobile data.</p><div class="list"><input class="ce-in nm-in" inputmode="numeric" maxlength="8" placeholder="AiboID (7 digits)"></div><div class="aibo-find-result" aria-live="polite">Enter a 7-digit AiboID to search.</div><button class="as-sm aibo-relay-settings" data-cloud="setup">Relay Status</button>' +
     (contacts.length?UI.sec('Contacts',contacts.map(c=>UI.row({title:contactName(c),sub:fmtAibo(c.aibo),act:c.aibo}))):'')+'</div>');
   const field=body.querySelector('.nm-in'),result=body.querySelector('.aibo-find-result');
   let found=null,sequence=0,timer=0;
@@ -4044,11 +4044,8 @@ function newMessage(pg) {
     const token=++sequence,id=field.value.replace(/[^0-9]/g,'');found=null;
     if(id.length!==7){show('Enter exactly 7 digits.');return;}
     if(id===myAibo()){show('That is your own AiboID.');return;}
-    if(!AiboCloud.endpoint){
-      show('Internet messaging is not connected yet. Tap Internet Messaging Settings to connect a relay.');return;
-    }
     if(!AiboCloud.ready){
-      show('Connecting to the internet relay…');
+      show(AiboCloud.starting ? 'Connecting to the internet relay…' : 'Service Offline — Aibo Messages will reconnect automatically.');
       if(!AiboCloud.starting)AiboCloud.register();
       return;
     }
