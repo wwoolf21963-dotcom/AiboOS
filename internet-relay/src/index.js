@@ -153,6 +153,30 @@ export default {
    }
    let me=await signedIn(request,env);
    if(!me)return reply({error:"Aibo ID not registered. Connect your phone first."},401);
+   if(request.method==="POST"&&path==="/v1/account/id"){
+      const info=await body(request,256),requested=String(info.id||"");
+      if(!ID.test(requested))return reply({error:"AiboID must be exactly seven digits and cannot start with zero"},400);
+      if(requested===me.id)return reply({id:me.id,unchanged:true});
+      if(await hitLimit(env.DB,"change-id:"+me.id,8,3600000))
+        return reply({error:"Too many AiboID changes. Try again later."},429);
+      // A change after messaging could orphan locally stored conversations or
+      // break AES-GCM associated data for undelivered messages. Refuse it.
+      const history=await env.DB.prepare(
+        "SELECT 1 AS used FROM messages WHERE from_id=? OR to_id=? LIMIT 1"
+      ).bind(me.id,me.id).first();
+      if(history)return reply({error:"Your AiboID is locked after your first message. Keep your message history safe."},409);
+      const occupied=await env.DB.prepare("SELECT id FROM accounts WHERE id=?").bind(requested).first();
+      if(occupied)return reply({error:"AiboID unavailable. Choose another 7-digit number."},409);
+      try{
+        await env.DB.prepare("UPDATE accounts SET id=?,updated_at=? WHERE id=?")
+          .bind(requested,Date.now(),me.id).run();
+      }catch(e){
+        const competing=await env.DB.prepare("SELECT id FROM accounts WHERE id=?").bind(requested).first();
+        if(competing)return reply({error:"AiboID unavailable. Choose another 7-digit number."},409);
+        throw e;
+      }
+      return reply({id:requested,changed:true});
+   }
    if(request.method==="PUT"&&path==="/v1/media"){
       if(!env.MEDIA)return reply({error:"Media storage not configured; add R2 bucket binding MEDIA"},503);
       const kind=String(request.headers.get("X-Aibo-Media-Kind")||"");
