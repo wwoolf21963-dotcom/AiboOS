@@ -17,6 +17,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Fast shell syntax preflight (before package downloads)
+        run: |
+          bash -n linux-iso/build.sh
+          sh -n linux-iso/aiboos-start
       - name: Install live image builder
         run: |
           sudo apt-get update
@@ -38,10 +42,6 @@ jobs:
               path.write_text(changed)
               print(filename, 'patched', changed!=data)
           PY
-      - name: Check AiboOS launcher and installer script
-        run: |
-          bash -n linux-iso/build.sh
-          sh -n linux-iso/aiboos-start
       - name: Build bootable Debian live ISO
         run: sudo bash linux-iso/build.sh
       - name: Check image integrity
