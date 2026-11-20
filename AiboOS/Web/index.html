@@ -1163,6 +1163,7 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
   </div>
 </div>
 <input type="file" id="filePick" hidden>
+<script src="message-storage.js"></script>
 <script>
 "use strict";
 /* ==== 01_core.js ==== */
@@ -1233,8 +1234,18 @@ function idb() {
   if (IDBP) return IDBP;
   IDBP = new Promise(res => {
     try {
-      const r = indexedDB.open('aiboos', 3);
-      r.onupgradeneeded = () => { const d = r.result; ['photos', 'songs', 'sounds', 'kv'].forEach(n => { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' }); }); };
+      const r = indexedDB.open('aiboos', 4);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        ['photos', 'songs', 'sounds', 'kv'].forEach(n => {
+          if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
+        });
+        if (!d.objectStoreNames.contains('messages')) {
+          const store = d.createObjectStore('messages', { keyPath: 'key' });
+          store.createIndex('conv', 'conv', { unique: false });
+          store.createIndex('unread', 'unread', { unique: false });
+        }
+      };
       r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null);
     } catch (e) { res(null); }
   });
@@ -1712,7 +1723,9 @@ window.addEventListener('aibo-native', ev => {
     for(const conv of Object.keys(S.localMsgs || {})) {
       for(const m of S.localMsgs[conv]) {
         if(m.id === e.id && m.from === myAibo()) {
-          m.delivery = e.status; save(); Bus.emit('chat:'+m.to);
+          m.delivery = e.status;
+          if (PhoneMsgStore.ready) PhoneMsgStore.persist(conv,m).catch(console.warn);
+          save(); Bus.emit('chat:'+m.to);
         }
       }
     }
@@ -3860,9 +3873,11 @@ const AiboCloud = {
       });
       m.delivery = result.delivered ? 'delivered' : 'queued';
       delete m.deliveryError;
+      if (PhoneMsgStore.ready) await PhoneMsgStore.persist(m.conv,m);
       save(); Bus.emit('chat:'+m.to); Bus.emit('threads');
     } catch(e) {
       m.delivery='failed';m.deliveryError=e.message || 'Internet unavailable';
+      if (PhoneMsgStore.ready) await PhoneMsgStore.persist(m.conv,m).catch(()=>{});
       save();Bus.emit('chat:'+m.to);Bus.emit('threads');
     }
   },
@@ -3883,10 +3898,13 @@ const AiboCloud = {
         const from=String(m.sender||''),to=myAibo();
         if(!/^[0-9]{7}$/.test(from)||typeof m.text!=='string'||!Number.isSafeInteger(Number(m.serverId)))continue;
         const conv=convId(from,to), old=localMsgs(conv);
-        if(!old.some(x=>x.from===from && x.id===m.clientId)) {
-          localPush(conv,{id:String(m.clientId||uid()).slice(0,64),conv,from,to,
-            text:m.text.slice(0,4000),name:String(m.name||'Aibo User').slice(0,48),
-            ts:Number(m.ts)||Date.now(),delivery:'received'});
+        const incomingMessage={id:String(m.clientId||uid()).slice(0,64),conv,from,to,
+          text:m.text.slice(0,4000),name:String(m.name||'Aibo User').slice(0,48),
+          ts:Number(m.ts)||Date.now(),delivery:'received'};
+        const exists = PhoneMsgStore.ready && await PhoneMsgStore.has(conv,incomingMessage);
+        if(!exists && !old.some(x=>x.from===from && x.id===m.clientId)) {
+          const saved = await localPush(conv,incomingMessage);
+          if (!saved) throw Error('Phone message storage full or unavailable; delivery not acknowledged');
           if(!contactByAibo(from)) {
             S.remoteProfiles=S.remoteProfiles||{};
             S.remoteProfiles[from]={name:String(m.name||'Aibo User').slice(0,48),
@@ -3903,7 +3921,9 @@ const AiboCloud = {
       for(const rcpt of receipts){
         for(const arr of Object.values(S.localMsgs||{}))for(const m of arr){
           if(m.from===myAibo() && m.id===rcpt.clientId){
-            m.delivery='delivered';Bus.emit('chat:'+m.to);
+            m.delivery='delivered';
+            if (PhoneMsgStore.ready) await PhoneMsgStore.persist(m.conv,m);
+            Bus.emit('chat:'+m.to);
           }
         }
         S.cloudReceiptSince=Math.max(Number(S.cloudReceiptSince)||0,Number(rcpt.deliveredAt)||0);
@@ -4051,18 +4071,45 @@ function onDBReady() {
   } catch (e) { }
   Store.sync();
 }
-function localPush(conv, m) { (S.localMsgs[conv] = S.localMsgs[conv] || []).push(m); save(); }
+function localPush(conv, m) {
+  S.localMsgs = S.localMsgs || {};
+  const history = S.localMsgs[conv] = S.localMsgs[conv] || [];
+  if (!history.some(x => x.id === m.id && x.from === m.from)) history.push(m);
+  if (m.from !== myAibo() && Msg.open !== m.from) m.unread = true;
+  if (!window.PhoneMsgStore || !PhoneMsgStore.ready) {
+    save(); return Promise.resolve(false);
+  }
+  PhoneMsgStore.rememberThread(conv, m);
+  save();
+  return PhoneMsgStore.persist(conv, m).catch(error => {
+    m.deliveryError = error.message || 'Phone storage unavailable';
+    console.warn('AiboOS message not saved to phone', error);
+    toast('Message storage unavailable — not delivered', '!', '', 'red');
+    return false;
+  });
+}
 function localMsgs(conv) { return (S.localMsgs && S.localMsgs[conv]) || []; }
 function allThreads() {
-  const map = {}, me = myAibo(); Object.keys(THREADS).forEach(k => map[k] = THREADS[k]);
+  const map = {}, me = myAibo();
+  Object.keys(S.messageThreads || {}).forEach(k => map[k] = S.messageThreads[k]);
+  Object.keys(THREADS).forEach(k => {
+    if (!map[k] || (map[k].ts || 0) < (THREADS[k].ts || 0)) map[k] = THREADS[k];
+  });
   Object.keys(S.localMsgs || {}).forEach(conv => { const a = S.localMsgs[conv]; if (!a.length) return; const last = a[a.length - 1], other = last.from === me ? last.to : last.from; if (!map[other] || (map[other].ts || 0) < last.ts) map[other] = { 'with': other, last: last.text, ts: last.ts }; });
   return Object.keys(map).map(k => map[k]).sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 function messageSend(to, text) {
   const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboCloud.endpoint ? 'pending' : (AiboNative.available?'waiting':'local') };
-  localPush(conv, m); playSfx('send');
-  if(AiboCloud.endpoint)AiboCloud.send(m);
-  else if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
+  playSfx('send');
+  localPush(conv, m).then(saved => {
+    if (!saved) {
+      m.delivery='failed'; m.deliveryError='Could not save on this phone';
+      Bus.emit('chat:'+to); Bus.emit('threads');
+      return;
+    }
+    if(AiboCloud.endpoint) AiboCloud.send(m);
+    else if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
+  });
   if (AIBODB) { try { AIBODB.doc('msgs/' + m.ts + '-' + Math.floor(Math.random() * 100000)).set(m); AIBODB.doc('threads/' + from + '/list/' + to).set({ 'with': to, last: text, ts: m.ts, dir: 'out' }); AIBODB.doc('threads/' + to + '/list/' + from).set({ 'with': from, last: text, ts: m.ts, dir: 'in' }); } catch (e) { } }
   Bus.emit('threads'); Bus.emit('chat:' + to, null);
 }
@@ -4136,6 +4183,17 @@ function chatPage(other) {
     },
     onShow(pg) {
       Msg.open = other;
+      if (PhoneMsgStore.ready) {
+        PhoneMsgStore.recent(convId(myAibo(),other),250).then(rows => {
+          const conv=convId(myAibo(),other);
+          const existing=localMsgs(conv);
+          const keys=new Set(existing.map(m=>m.from+'|'+m.id));
+          rows.forEach(m=>{if(!keys.has(m.from+'|'+m.id))existing.push(m);});
+          existing.sort((a,b)=>(a.ts||0)-(b.ts||0));
+          if(pg.el&&pg.el.isConnected)render(pg,existing);
+          PhoneMsgStore.markRead(conv).catch(console.warn);
+        }).catch(e=>console.warn('Could not load messages',e));
+      }
       if(!localWired){localWired=true;Bus.on('chat:'+other,()=>{if(pg.el&&pg.el.isConnected)render(pg,localMsgs(convId(myAibo(),other)));});}
       if (AIBODB && !unsub) { try { let q = AIBODB.collection('msgs').where('conv', '==', convId(myAibo(), other)); if (q.orderBy) q = q.orderBy('ts'); unsub = q.onSnapshot(snap => { const arr = []; forEachDoc(snap, d => { if (d.data) arr.push(d.data); }); arr.sort((a, b) => (a.ts || 0) - (b.ts || 0)); render(pg, arr.length ? arr : localMsgs(convId(myAibo(), other))); }); } catch (e) { } }
     },
@@ -5508,6 +5566,7 @@ async function boot() {
   if (!S.aiboThemeApplied) { S.aiboThemeApplied = true; applyThemePreset('aibo'); await new Promise(r => setTimeout(r, 50)); }
   Home.render();
   if (typeof myAibo === 'function') myAibo();
+  await PhoneMsgStore.init(S,idb);
   initDB(); initBattery(); AiboCloud.init();
   if (hasClaude()) { try { claude.use('downloads').then(d => DLH.d = d || null).catch(() => { }); } catch (e) { } }
   musicLoadSongs();
