@@ -58,7 +58,10 @@ echo "Building AiboOS Linux Edition — this does NOT change the current compute
 lb build
 # Ubuntu's legacy live-build names hybrid images binary.hybrid.iso; newer
 # variants use live-image-*.iso. Recognize both, and require nonzero size.
-ISO="$(find "$WORK" -maxdepth 1 -type f \\( -name 'live-image-*.iso' -o -name 'binary*.iso' \\) -print -quit)"
+ISO=""
+for candidate in "$WORK"/binary*.iso "$WORK"/live-image-*.iso; do
+  if [[ -f "$candidate" && -s "$candidate" ]]; then ISO="$candidate"; break; fi
+done
 if [[ -z "$ISO" || ! -s "$ISO" ]]; then echo "No nonempty ISO was produced" >&2; exit 1; fi
 cp "$ISO" "$DIST/AiboOS_Linux_amd64.iso"
 sha256sum "$DIST/AiboOS_Linux_amd64.iso" > "$DIST/AiboOS_Linux_amd64.iso.sha256"
