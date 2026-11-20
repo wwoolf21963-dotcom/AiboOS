@@ -4218,10 +4218,12 @@ const AiboCloud = {
     this.register();
     setInterval(() => {
       if (this.endingSession || !this.endpoint || document.hidden || navigator.onLine === false) return;
-      const interval = S.lowPower ? (Msg.open ? 3000 : 15000) : (Msg.open ? 700 : 4000); // prioritize battery while saving power
-      if (this.ready && Date.now() - (this.lastSyncAttempt || 0) >= interval) this.sync();
-      else if (!this.ready && !this.starting && Date.now() - (this.lastRegisterAttempt || 0) > 11000) this.register();
-    }, 350);
+      const interval = S.lowPower ? (Msg.open ? 3000 : 12000) : (Msg.open ? 700 : 1200);
+      const now = Date.now();
+      if (now < (this.backoffUntil || 0)) return;
+      if (this.ready && !this.syncBusy && now - (this.lastSyncAttempt || 0) >= interval) this.sync();
+      else if (!this.ready && !this.starting && now - (this.lastRegisterAttempt || 0) > 11000) this.register();
+    }, 250);
     window.addEventListener('online', () => { if (!this.endingSession && this.endpoint) this.ready ? this.sync() : this.register(); });
     document.addEventListener('visibilitychange', () => {
       if (!this.endingSession && !document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
@@ -4259,7 +4261,7 @@ const AiboCloud = {
       return data;
     } catch(e) {
       const error = e.name==='AbortError' ? Error('Internet relay request timed out') : e;
-      if(this.ready && (!error.status || error.status>=500 || error.status===429)) {
+      if(this.ready && (!error.status || error.status>=500)) {
         this.ready=false; this.error=error.message || 'Service Offline';
         Bus.emit('cloud:status'); Bus.emit('threads');
       }
@@ -4401,10 +4403,13 @@ const AiboCloud = {
       if(receipts.length)save();
       this.error='';
     }catch(e){
-      this.error=e.message||'Could not check internet messages';
-      this.ready=false;
-      Bus.emit('cloud:status'); Bus.emit('threads');
-      // The retry timer will register again when connectivity returns.
+      if(e.status===429){
+        this.backoffUntil=Date.now()+18000;
+      }else{
+        this.error=e.message||'Could not check internet messages';
+        this.ready=false;
+        Bus.emit('cloud:status'); Bus.emit('threads');
+      }
     }finally{this.syncBusy=false;}
   }
 };
@@ -4683,16 +4688,90 @@ function messageSend(to, text, attachmentBlob, mediaKind) {
   Bus.emit('threads'); Bus.emit('chat:' + to, null);
 }
 const Msg = { open: null, profilePrompted:false };
+/* Choose your own or generate a unique 7-digit AiboID.
+ * Changing IDs is blocked once messaging begins to protect old message history.
+ * Cloudflare validates uniqueness atomically; generation alone does not reserve an ID. */
+function aiboChooseId(after) {
+  if(!AiboCloud.ready){toast('Connect to Internet Messaging first','!','','red');return;}
+  const body=el('<div class="ce"><p class="aibo-cloud-note">Choose your own 7-digit AiboID or generate a random one. An ID cannot be changed after you start messaging.</p>'+
+    '<div class="list"><input class="ce-in custom-aibo-id" inputmode="numeric" type="text" maxlength="7" placeholder="7-digit AiboID" value="'+esc(myAibo())+'"></div>'+
+    '<button type="button" class="as-sm" data-id-random>🎲 Generate Random AiboID</button>'+
+    '<p class="aibo-cloud-note custom-aibo-feedback" role="status" aria-live="polite">Your current AiboID is '+esc(myAibo())+'.</p></div>');
+  const field=body.querySelector('.custom-aibo-id');
+  const feedback=body.querySelector('.custom-aibo-feedback');
+  let busy=false, generated=false;
+  const randomId=()=>{
+    const random=new Uint32Array(1);crypto.getRandomValues(random);
+    return String(1000000+random[0]%9000000);
+  };
+  body.querySelector('[data-id-random]').addEventListener('click',()=>{
+    field.value=randomId();generated=true;
+    feedback.textContent='Random AiboID '+field.value+' generated. Tap Save to claim it.';
+  });
+  field.addEventListener('input',()=>{generated=false;feedback.textContent='Tap Save to check availability.';});
+  Sheet.open({title:'Choose AiboID',done:'Save AiboID',detent:'medium',content:body,onDone:sheet=>{
+    if(busy)return false;
+    const proposed=field.value.trim();
+    if(!/^[1-9][0-9]{6}$/.test(proposed)){
+      feedback.textContent='Enter exactly seven digits, starting from 1–9.';
+      return false;
+    }
+    if(proposed===myAibo()){
+      feedback.textContent='That is already your AiboID.';
+      return false;
+    }
+    if(Object.values(S.localMsgs||{}).some(arr=>Array.isArray(arr)&&arr.length) ||
+       Object.keys(S.messageThreads||{}).length){
+      feedback.textContent='AiboID is locked after messaging begins, to protect your conversations.';
+      return false;
+    }
+    busy=true;
+    feedback.textContent='Checking availability…';
+    (async()=>{
+      try{
+        let result=null;
+        let candidate=proposed;
+        // Retry a collided random candidate a limited number of times.
+        for(let attempt=0;attempt<(generated?8:1);attempt++){
+          try{
+            result=await AiboCloud.request('/v1/account/id','POST',{id:candidate});
+            break;
+          }catch(error){
+            if(generated&&error.status===409&&attempt<7){
+              candidate=randomId();
+              field.value=candidate;
+              feedback.textContent='Random ID unavailable — trying another…';
+              continue;
+            }
+            throw error;
+          }
+        }
+        if(!result||result.id!==candidate)throw Error('Server did not confirm AiboID');
+        S.aiboId=candidate;saveNow();
+        AiboNative.send('peerIdentity',{id:candidate,name:aiboProfileName(),photo:S.aiboPhoto||''});
+        Bus.emit('threads');Bus.emit('settings');
+        sheet.close();
+        toast('Your AiboID is now '+candidate);
+        if(after)after();
+      }catch(error){
+        feedback.textContent=error.status===404?
+          'Your server needs the latest Worker code deployed to choose IDs.':
+          (error.message||'Could not save AiboID');
+      }finally{busy=false;}
+    })();
+    return false;
+  }});
+}
 function threadsPage() {
   return {
     title: 'Messages', right: [{ icon: '<svg viewBox="0 0 20 20" width="18"><path d="M13.5 3.5l3 3L7 16H4v-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', label: 'New Message', act: (b, pg) => newMessage(pg) }],
     render(pg) {
       const T = allThreads();
-      pg.c.innerHTML = UI.search('Search') + '<button class="aibo-profile-row list" data-act="profile">' + avatarHTML({first:aiboProfileName(),photo:S.aiboPhoto||''},50) + '<span><b>'+esc(aiboProfileName())+'</b><small>Edit name / photo · AiboID '+fmtAibo(myAibo())+'</small></span><span>›</span></button>' + '<button class="aibo-cloud-card list" data-act="cloud"><b>🌐 Internet Messaging</b><small>'+ (AiboCloud.ready?'Connected — Wi-Fi and mobile data':AiboCloud.starting?'Connecting…':'Service Offline') +'</small></button><div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AiboCloud.ready ? 'on' : '') + '">' + (AiboCloud.ready ? 'Online' : AiboCloud.starting ? 'Connecting…' : 'Service Offline') + '</span></div>' +
+      pg.c.innerHTML = UI.search('Search') + '<button class="aibo-profile-row list" data-act="profile">' + avatarHTML({first:aiboProfileName(),photo:S.aiboPhoto||''},50) + '<span><b>'+esc(aiboProfileName())+'</b><small>Edit name / photo · AiboID '+fmtAibo(myAibo())+'</small></span><span>›</span></button>' + '<button class="as-sm aibo-change-id list" data-act="chooseid">🎲 Choose / Generate AiboID</button>' + '<button class="aibo-cloud-card list" data-act="cloud"><b>🌐 Internet Messaging</b><small>'+ (AiboCloud.ready?'Connected — Wi-Fi and mobile data':AiboCloud.starting?'Connecting…':'Service Offline') +'</small></button><div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AiboCloud.ready ? 'on' : '') + '">' + (AiboCloud.ready ? 'Online' : AiboCloud.starting ? 'Connecting…' : 'Service Offline') + '</span></div>' +
         (T.length ? '<div class="th-list">' + T.map(t => { const c = contactByAibo(t['with']); return '<button class="th" data-act="t:' + t['with'] + '">' + aiboPeerAvatar(t['with'], 46) + '<span class="th-tx"><span class="th-h"><b>' + esc(aiboPeerName(t['with'])) + '</b><i>' + ago(t.ts || Date.now()) + '</i></span><span class="th-b">' + esc(t.last || '') + '</span></span></button>'; }).join('') + '</div>' : UI.empty('<svg viewBox="0 0 24 24" width="40"><path fill="currentColor" d="M12 4C6.9 4 3 7.3 3 11.3c0 2.3 1.3 4.4 3.4 5.7-.2 1.2-.9 2.3-1.8 3 1.8.1 3.5-.5 4.8-1.5.8.2 1.7.3 2.6.3 5.1 0 9-3.3 9-7.5S17.1 4 12 4z"/></svg>', 'No Messages', 'Share your AiboID. Anyone who enters it can message you.'));
       const inp = pg.c.querySelector('.srch input'); inp.addEventListener('input', () => { const q = inp.value.toLowerCase(); $$('.th', pg.c).forEach(r => r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'); });
     },
-    act(a) { if(a==='profile'){aiboProfileEdit(()=>this.nav.refresh(this));return;}if(a==='cloud'){aiboCloudSettings(()=>this.nav.refresh(this));return;} if (a.indexOf('t:') === 0) this.nav.push(chatPage(a.slice(2))); }, onShow(pg) { pg.nav.refresh(pg); if(AiboNative.available && !S.aiboName && !Msg.profilePrompted){Msg.profilePrompted=true;setTimeout(()=>aiboProfileEdit(()=>pg.nav.refresh(pg)),450);} }
+    act(a) { if(a==='profile'){aiboProfileEdit(()=>this.nav.refresh(this));return;}if(a==='chooseid'){aiboChooseId(()=>this.nav.refresh(this));return;}if(a==='cloud'){aiboCloudSettings(()=>this.nav.refresh(this));return;} if (a.indexOf('t:') === 0) this.nav.push(chatPage(a.slice(2))); }, onShow(pg) { pg.nav.refresh(pg); if(AiboNative.available && !S.aiboName && !Msg.profilePrompted){Msg.profilePrompted=true;setTimeout(()=>aiboProfileEdit(()=>pg.nav.refresh(pg)),450);} }
   };
 }
 function newMessage(pg) {
@@ -4830,6 +4909,7 @@ function chatPage(other) {
     },
     onShow(pg) {
       Msg.open = other;
+      if(AiboCloud.ready && !AiboCloud.syncBusy)AiboCloud.sync();
       if (PhoneMsgStore.ready) {
         PhoneMsgStore.recent(convId(myAibo(),other),250).then(rows => {
           const conv=convId(myAibo(),other);
