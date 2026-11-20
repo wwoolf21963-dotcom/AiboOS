@@ -512,6 +512,15 @@ body.light .seg button.on{background:#fff}
 .cp-in input::placeholder{color:var(--label2)}
 .cp-send{width:34px;height:34px;border-radius:50%;background:var(--fill);color:#fff;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .3s cubic-bezier(.3,1.5,.5,1);transform:scale(.85)}
 .compose.has .cp-send{background:var(--tint);transform:none}
+.cp-in{padding-left:5px;gap:2px}
+.cp-media-btn{flex:none;width:27px;height:34px;display:flex;align-items:center;justify-content:center;font-size:17px;color:var(--label);border:0;background:transparent;border-radius:10px}
+.cp-media-btn:active{background:var(--fill)}
+.cp-media-btn.recording{color:var(--red);background:var(--fill);animation:aibo-voice-pulse .8s ease-in-out infinite alternate}
+@keyframes aibo-voice-pulse{from{opacity:1}to{opacity:.5}}
+.bub .aibo-media-open{display:block;max-width:100%;border:0;border-radius:12px;background:rgba(127,127,127,.2);color:inherit;padding:9px;font-size:14px;line-height:1.4;margin-top:6px;text-align:left;word-wrap:break-word}
+.aibo-media-preview{max-width:min(225px,100%);max-height:270px;border-radius:12px;display:block;margin-top:6px;object-fit:contain}
+audio.aibo-media-preview{height:48px;width:210px}
+video.aibo-media-preview{max-height:240px}
 .chat-pg .pg-pad{height:96px}
 .bubs{display:flex;flex-direction:column;gap:3px;padding-top:4px}
 .bub{max-width:76%;padding:8px 13px;border-radius:19px;font-size:16.5px;line-height:1.3;word-wrap:break-word;white-space:pre-wrap;user-select:text;-webkit-user-select:text}
@@ -4614,18 +4623,96 @@ function newMessage(pg) {
   setTimeout(()=>field.focus(),350);
 }
 function chatPage(other) {
-  let unsub = null, localWired = false;
+  let unsub = null, localWired = false, recorder = null, discardVoice = false;
+  let voiceTracks = null;
+  const mediaURLs = [];
+  const finishVoice = () => {
+    if(recorder && recorder.state==='recording')recorder.stop();
+  };
   const render = (pg, arr) => {
     const me = myAibo(), box = pg.c.querySelector('.bubs'); if (!box) return; const seen = {}, out = [];
-    arr.forEach(m => { const k = (m.ts || 0) + '|' + m.from + '|' + m.text; if (!seen[k]) { seen[k] = 1; out.push(m); } });
-    let last = 0; box.innerHTML = out.length ? out.map((m, i) => { const mine = m.from === me, stamp = (m.ts - last > 3600e3) ? '<div class="bub-t">' + fmtDate(new Date(m.ts)) + ' ' + fmtTime(new Date(m.ts)) + '</div>' : ''; last = m.ts; const tail = !out[i + 1] || out[i + 1].from !== m.from; return stamp + '<div class="bub ' + (mine ? 'me' : 'them') + (tail ? ' tail' : '') + '"><span class="bub-author">' + esc(mine ? aiboProfileName() : (m.name || aiboPeerName(m.from))) + '</span>' + esc(m.text) + '</div>'; }).join('') + (out[out.length - 1].from === me ? '<div class="bub-s">' + (AiboCloud.endpoint ? (out[out.length-1].delivery==='delivered'?'Delivered ✓✓':out[out.length-1].delivery==='queued'?'Sent · waiting for delivery':out[out.length-1].delivery==='failed'?'Not sent: '+esc(out[out.length-1].deliveryError||'connection error'): 'Waiting for internet relay') : AIBODB ? 'Sent' : AiboNative.available ? (out[out.length - 1].delivery === 'delivered' ? 'Delivered over nearby Wi-Fi' : 'Waiting for nearby AiboOS user') : 'Saved on this device') + '</div>' + (AiboCloud.endpoint && out[out.length-1].delivery==='failed'?'<button class="bub-retry" data-retry="'+esc(out[out.length-1].id)+'">Tap to retry</button>':'') : '') : '<div class="bub-empty">Messages to ' + fmtAibo(other) + (AiboCloud.endpoint ? '<br>Messages can reach this AiboID over Wi-Fi or mobile data when the relay is connected.' : AIBODB ? '' : '<br>Set up Internet Messaging to message people anywhere.') + '</div>';
+    arr.forEach(m => { const k = String(m.from)+'|'+String(m.id||m.ts); if (!seen[k]) { seen[k] = 1; out.push(m); } });
+    let last = 0; box.innerHTML = out.length ? out.map((m, i) => { const mine = m.from === me, stamp = (m.ts - last > 3600e3) ? '<div class="bub-t">' + fmtDate(new Date(m.ts)) + ' ' + fmtTime(new Date(m.ts)) + '</div>' : ''; last = m.ts; const tail = !out[i + 1] || out[i + 1].from !== m.from; return stamp + '<div class="bub ' + (mine ? 'me' : 'them') + (tail ? ' tail' : '') + '"><span class="bub-author">' + esc(mine ? aiboProfileName() : (m.name || aiboPeerName(m.from))) + '</span>' + esc(m.text) + (m.attachment ? '<button class="aibo-media-open" data-media="'+esc(m.from+'|'+m.id)+'">▶ '+esc(AiboMedia.label(m.attachment.kind))+' · Tap to open</button>' : '') + '</div>'; }).join('') + (out[out.length - 1].from === me ? '<div class="bub-s">' + (AiboCloud.endpoint ? (out[out.length-1].delivery==='delivered'?'Delivered ✓✓':out[out.length-1].delivery==='queued'?'Sent · waiting for delivery':out[out.length-1].delivery==='failed'?'Not sent: '+esc(out[out.length-1].deliveryError||'connection error'): 'Waiting for internet relay') : AIBODB ? 'Sent' : AiboNative.available ? (out[out.length - 1].delivery === 'delivered' ? 'Delivered over nearby Wi-Fi' : 'Waiting for nearby AiboOS user') : 'Saved on this device') + '</div>' + (AiboCloud.endpoint && out[out.length-1].delivery==='failed'?'<button class="bub-retry" data-retry="'+esc(out[out.length-1].id)+'">Tap to retry</button>':'') : '') : '<div class="bub-empty">Messages to ' + fmtAibo(other) + (AiboCloud.endpoint ? '<br>Messages can reach this AiboID over Wi-Fi or mobile data when the relay is connected.' : AIBODB ? '' : '<br>Set up Internet Messaging to message people anywhere.') + '</div>';
     pg.scroll.scrollTop = pg.scroll.scrollHeight;
   };
   return {
     title: aiboPeerName(other), large: false, grouped: false, cls: 'chat-pg', right: [{icon:PH_ICON,label:'Wi-Fi Call',act:()=>aiboCall(other)}],
     render(pg) {
       pg.c.innerHTML = '<div class="bubs"></div>';
-      if (!pg.el.querySelector('.compose')) { const cp = el('<div class="compose"><div class="cp-in glass"><input placeholder="iMessage" enterkeyhint="send"><button class="cp-send" aria-label="Send"><svg viewBox="0 0 20 20" width="16"><path d="M10 16V4M5 9l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>'); pg.el.appendChild(cp); const inp = cp.querySelector('input'); inp.placeholder = 'Message'; const send = () => { const t = inp.value.trim(); if (!t) return; inp.value = ''; cp.classList.remove('has'); messageSend(other, t); render(pg, localMsgs(convId(myAibo(), other))); }; inp.addEventListener('keydown', e => { if (e.key === 'Enter') send(); }); inp.addEventListener('input', () => cp.classList.toggle('has', !!inp.value.trim())); cp.querySelector('.cp-send').addEventListener('click', send); }
+      if (!pg.el.querySelector('.compose')) {
+        const cp=el('<div class="compose"><div class="cp-in glass">'+
+          '<button type="button" class="cp-media-btn" data-aibo-media="photo" aria-label="Send photo">📷</button>'+
+          '<button type="button" class="cp-media-btn" data-aibo-media="video" aria-label="Send video">🎥</button>'+
+          '<button type="button" class="cp-media-btn" data-aibo-media="voice" aria-label="Record voice note">🎙️</button>'+
+          '<input class="cp-text" placeholder="Message" enterkeyhint="send">'+
+          '<button type="button" class="cp-send" aria-label="Send message"><svg viewBox="0 0 20 20" width="16"><path d="M10 16V4M5 9l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'+
+          '</div><input class="cp-file-photo" type="file" accept="image/*" hidden><input class="cp-file-video" type="file" accept="video/*" hidden></div>');
+        pg.el.appendChild(cp);
+        const inp=cp.querySelector('.cp-text');
+        const send=()=>{
+          const t=inp.value.trim();if(!t)return;
+          inp.value='';cp.classList.remove('has');messageSend(other,t);
+          render(pg,localMsgs(convId(myAibo(),other)));
+        };
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+        inp.addEventListener('input',()=>cp.classList.toggle('has',!!inp.value.trim()));
+        cp.querySelector('.cp-send').addEventListener('click',send);
+        ['photo','video'].forEach(kind=>{
+          const field=cp.querySelector('.cp-file-'+kind);
+          cp.querySelector('[data-aibo-media="'+kind+'"]').addEventListener('click',()=>field.click());
+          field.addEventListener('change',()=>{
+            const file=field.files&&field.files[0];field.value='';
+            if(!file)return;
+            messageSend(other,AiboMedia.label(kind),file,kind);
+            render(pg,localMsgs(convId(myAibo(),other)));
+          });
+        });
+        const mic=cp.querySelector('[data-aibo-media="voice"]');
+        mic.addEventListener('click',async()=>{
+          if(recorder && recorder.state==='recording'){finishVoice();return;}
+          try{
+            if(!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia)
+              throw Error('Voice recording is not supported in this browser');
+            const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+            voiceTracks=stream;
+            const types=['audio/mp4','audio/webm','audio/ogg'];
+            const selected=types.find(t=>MediaRecorder.isTypeSupported?.(t))||'';
+            recorder=selected?new MediaRecorder(stream,{mimeType:selected}):new MediaRecorder(stream);
+            const chunks=[];discardVoice=false;
+            recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+            recorder.onerror=()=>toast('Voice recording failed','!','','red');
+            recorder.onstop=()=>{
+              mic.classList.remove('recording');mic.textContent='🎙️';
+              stream.getTracks().forEach(t=>t.stop());voiceTracks=null;
+              const type=String(recorder.mimeType||selected||'audio/mp4').split(';')[0];
+              const blob=new Blob(chunks,{type});
+              recorder=null;
+              if(!discardVoice && blob.size){
+                messageSend(other,'🎤 Voice note',blob,'voice');
+                render(pg,localMsgs(convId(myAibo(),other)));
+              }
+            };
+            recorder.start(1000);
+            mic.classList.add('recording');mic.textContent='⏹';
+            toast('Recording voice note — tap stop to send');
+            setTimeout(()=>{if(recorder&&recorder.state==='recording')finishVoice();},45000);
+          }catch(error){
+            if(voiceTracks)voiceTracks.getTracks().forEach(t=>t.stop());
+            voiceTracks=null;recorder=null;mic.classList.remove('recording');mic.textContent='🎙️';
+            toast(error.message||'Microphone unavailable','!','','red');
+          }
+        });
+      }
+      on(pg.c,'click','[data-media]',(ev,b)=>{
+        const key=b.dataset.media,conv=convId(myAibo(),other);
+        const m=localMsgs(conv).find(x=>x.from+'|'+x.id===key);
+        if(!m||!m.attachment)return;
+        b.disabled=true;b.textContent='Opening…';
+        AiboMedia.open(m,b,mediaURLs).catch(error=>{
+          b.disabled=false;b.textContent='▶ Tap to open';
+          toast(error.message||'Cannot open attachment','!','','red');
+        });
+      });
       on(pg.c,'click','[data-retry]',(ev,b)=>{const m=localMsgs(convId(myAibo(),other)).find(x=>x.id===b.dataset.retry);if(m)AiboCloud.send(m);});
       render(pg, localMsgs(convId(myAibo(), other)));
     },
@@ -4645,7 +4732,14 @@ function chatPage(other) {
       if(!localWired){localWired=true;Bus.on('chat:'+other,()=>{if(pg.el&&pg.el.isConnected)render(pg,localMsgs(convId(myAibo(),other)));});}
       if (AIBODB && !unsub) { try { let q = AIBODB.collection('msgs').where('conv', '==', convId(myAibo(), other)); if (q.orderBy) q = q.orderBy('ts'); unsub = q.onSnapshot(snap => { const arr = []; forEachDoc(snap, d => { if (d.data) arr.push(d.data); }); arr.sort((a, b) => (a.ts || 0) - (b.ts || 0)); render(pg, arr.length ? arr : localMsgs(convId(myAibo(), other))); }); } catch (e) { } }
     },
-    onClose() { Msg.open = null; if (unsub) { try { unsub(); } catch (e) { } unsub = null; } }
+    onClose() {
+      Msg.open = null;
+      discardVoice=true;
+      if(recorder&&recorder.state==='recording')recorder.stop();
+      if(voiceTracks)voiceTracks.getTracks().forEach(t=>t.stop());
+      for(const url of mediaURLs)URL.revokeObjectURL(url);
+      if (unsub) { try { unsub(); } catch (e) { } unsub = null; }
+    }
   };
 }
 defineApp('messages', {
