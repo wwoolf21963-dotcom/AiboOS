@@ -18,6 +18,7 @@ cd "$WORK"
 lb clean --purge 2>/dev/null || true
 rm -rf config
 lb config --mode debian --distribution trixie --architectures amd64 \
+  --initsystem systemd \
   --binary-images iso-hybrid --archive-areas "main non-free-firmware" \
   --bootappend-live "boot=live components username=aiboos" \
   --security false \

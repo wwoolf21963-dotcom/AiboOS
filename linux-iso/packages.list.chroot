@@ -1,4 +1,7 @@
 # AiboOS Linux Edition live desktop
+# Select the Debian 13 systemd live backend explicitly. Do not install sysvinit.
+systemd-sysv
+live-config-systemd
 live-task-xfce
 xfce4
 lightdm
