@@ -4041,8 +4041,8 @@ const AiboCloud = {
     setInterval(() => {
       if (this.endingSession || !this.endpoint || document.hidden || navigator.onLine === false) return;
       if (this.ready) this.sync();
-      else if (!this.starting) this.register();
-    }, 12000);
+      else if (!this.starting && Date.now() - (this.lastRegisterAttempt || 0) > 11000) this.register();
+    }, 3000);
     window.addEventListener('online', () => { if (!this.endingSession && this.endpoint) this.ready ? this.sync() : this.register(); });
     document.addEventListener('visibilitychange', () => {
       if (!this.endingSession && !document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
@@ -4090,6 +4090,7 @@ const AiboCloud = {
   async register() {
     if (!this.endpoint || this.starting || this.endingSession) return;
     this.starting = true;
+    this.lastRegisterAttempt = Date.now();
     Bus.emit('cloud:status');
     try {
       const original = myAibo();
