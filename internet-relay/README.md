@@ -18,7 +18,7 @@ People can search Aibo IDs worldwide. Messages are queued on the server until th
 
 - This is a development prototype, **not end-to-end encrypted**. The server stores plaintext messages, sender/recipient IDs, and optional photos. Do not use for sensitive information.
 - The 7-digit IDs are **not proof of a person's identity**. A proper account-verification and anti-impersonation system is still needed.
-- Registering a device requires a random 256-bit device key; the server stores a SHA-256 hash, not the key. The native client should store the key in iOS Keychain.
+- Registering a device requires a random 256-bit device key; the server stores its SHA-256 hash, not the key. **This early web/IPA client currently keeps the key in browser localStorage, not Keychain.** Clearing website/app storage loses access to the account. Move it to the iOS Keychain before public launch.
 - Network API uses TLS (HTTPS). Add moderation, reporting/blocking, stronger anti-spam, database retention policies, and operational monitoring before public launch.
 - The free tier has usage limits. Messages are polled while the app is open; there are **no push notifications while the app is closed**.
 - This relay is **text messaging only**. Worldwide voice calling needs an additional WebRTC signaling and TURN service. Local nearby Aibo Calls remain separate.
