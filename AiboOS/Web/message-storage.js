@@ -142,8 +142,17 @@
     if (used + row.bytes - oldBytes > LIMIT) {
       throw Error('AiboOS message storage is full (2.5 GB policy limit)');
     }
-    // Durable IDB transaction, not an optimistic localStorage write.
-    await writeRow(row);
+    // A device may run out of quota before the 2.5 GB app-policy ceiling.
+    // Compress unread messages and retry once rather than silently dropping data.
+    try {
+      await writeRow(row);
+    } catch (error) {
+      if (!/quota|space|storage full/i.test(String(error.name || '')+' '+String(error.message || '')))
+        throw error;
+      const reduced = await compactUnread();
+      if (!reduced) throw Error('Phone storage full; message was not saved');
+      await writeRow(row);
+    }
     used = Math.max(0, used + row.bytes - oldBytes);
     state.messageBytes = used;
     saveState();
