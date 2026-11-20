@@ -21,6 +21,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-utils grub-efi-amd64-bin
+      - name: Fix Ubuntu live-build legacy Debian Contents URL
+        run: |
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          for filename in ('/usr/lib/live/build/lb_chroot_linux-image',
+                           '/usr/lib/live/build/chroot_linux-image'):
+              path=Path(filename)
+              if not path.exists():
+                  continue
+              data=path.read_text()
+              old1='/dists/${LB_PARENT_DISTRIBUTION}/Contents-'
+              old2='/dists/${LB_DISTRIBUTION}/Contents-'
+              changed=data.replace(old1,'/dists/${LB_PARENT_DISTRIBUTION}/main/Contents-')
+              changed=changed.replace(old2,'/dists/${LB_DISTRIBUTION}/main/Contents-')
+              path.write_text(changed)
+              print(filename, 'patched', changed!=data)
+          PY
       - name: Check AiboOS launcher and installer script
         run: |
           bash -n linux-iso/build.sh
