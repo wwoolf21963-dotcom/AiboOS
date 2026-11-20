@@ -620,7 +620,7 @@ body.light .cbtn.gray{background:#e5e5ea;color:#000}
 .kp-call{width:var(--kp);height:var(--kp);border-radius:50%;background:#30d158;color:#fff;display:flex;align-items:center;justify-content:center}.kp-call svg{width:30px;height:30px}
 .kp-del{font-size:24px;color:var(--label2)}
 .rc-row .r-ic{background:transparent!important;color:var(--label3)}.rc-row .r-ic svg{width:16px}
-.aibo-profile-row{display:flex;align-items:center;gap:13px;width:100%;margin-bottom:12px;padding:13px 14px;text-align:left;color:var(--label);background:var(--cell)}.aibo-profile-row>span:nth-child(2){flex:1;min-width:0}.aibo-profile-row b{display:block;font-size:16px}.aibo-profile-row small{display:block;font-size:11px;color:var(--label2);line-height:1.5}.aibo-profile-row>span:last-child{font-size:24px;color:var(--label2)}.bub-author{display:block;font-size:10px;font-weight:700;opacity:.75;margin-bottom:5px}.aibo-pfp{display:flex;justify-content:center}.aibo-pfp .av{margin:auto}.aid-card{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;margin-bottom:18px}
+.lp-fc{font-size:13px;color:var(--tint);padding:9px;margin-left:10px}.aibo-profile-row{display:flex;align-items:center;gap:13px;width:100%;margin-bottom:12px;padding:13px 14px;text-align:left;color:var(--label);background:var(--cell)}.aibo-profile-row>span:nth-child(2){flex:1;min-width:0}.aibo-profile-row b{display:block;font-size:16px}.aibo-profile-row small{display:block;font-size:11px;color:var(--label2);line-height:1.5}.aibo-profile-row>span:last-child{font-size:24px;color:var(--label2)}.bub-author{display:block;font-size:10px;font-weight:700;opacity:.75;margin-bottom:5px}.aibo-pfp{display:flex;justify-content:center}.aibo-pfp .av{margin:auto}.aid-card{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;margin-bottom:18px}
 .aid-card small{display:block;font-size:12px;color:var(--label2)}.aid-card b{font-size:24px;font-weight:600;letter-spacing:1px}
 .aid-net{font-size:12px;font-weight:600;padding:5px 10px;border-radius:12px;background:var(--fill2);color:var(--label2)}.aid-net.on{background:rgba(48,209,88,.18);color:var(--green)}
 .th-list{display:flex;flex-direction:column}
@@ -1919,7 +1919,7 @@ const Lock = {
     L.innerHTML =
       '<div class="lk-pass"><div class="lk-pass-in"><div class="lp-t">Enter Passcode</div><div class="lp-dots"></div><div class="lp-keys">' +
       [1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, 'del'].map(k => k === '' ? '<span></span>' : k === 'del' ? '<button class="lp-del" data-k="del">Cancel</button>' : '<button class="lp-k" data-k="' + k + '"><b>' + k + '</b><small>' + (KP_LET[k - 1] || (k === 0 ? '' : '')) + '</small></button>').join('') +
-      '</div><div class="lp-foot"><button class="lp-em" data-k="em">Emergency</button></div></div></div>' +
+      '</div><div class="lp-foot"><button class="lp-em" data-k="em">Emergency</button><button class="lp-fc" hidden>Use Face Check</button></div></div></div>' +
       '<div class="lk-pane"><div class="lk-wall"></div><div class="lk-face"><div class="lk-date"></div><div class="lk-time num"></div></div>' +
       '<div class="lk-nc-h"><b>Notification Centre</b><button class="lk-clear" aria-label="Clear all">Clear</button></div>' +
       '<div class="lk-notifs"></div>' +
@@ -1927,6 +1927,7 @@ const Lock = {
       '<div class="lk-torch"></div>';
     this.pane = L.querySelector('.lk-pane'); this.pass = L.querySelector('.lk-pass');
     on(L, 'click', '[data-k]', (e, b) => this.key(b.dataset.k));
+    on(L,'click','.lp-fc',()=>{if(S.faceUnlock)AiboNative.send('faceVerify');});
     on(L, 'click', '.lk-clear', () => { S.notifs = []; save(); this.renderNotifs(); Bus.emit('notifs'); });
     on(L, 'click', '.ln', (e, b) => this.openNotif(b.dataset.id));
     longPress(L, '[data-b]', b => this.quick(b.dataset.b), 380);
@@ -1954,7 +1955,7 @@ const Lock = {
   /* ---- show / hide ---- */
   lock() {
     if (Aibo.active) Aibo.close(); closeAllOverlays(); CC.close(true);
-    const was = this.locked; this.locked = true; this.mode = 'lock'; this.entry = ''; this.fails = 0;
+    const was = this.locked; this.locked = true; this.mode = 'lock'; this.entry = ''; this.fails = 0; this.faceTried = false;
     byId('lock').classList.remove('nc'); byId('lock').style.visibility = 'visible'; byId('lock').style.pointerEvents = 'auto';
     this.spr && this.spr.stop(); this.y = 0; setTf(this.pane, 0, 0); this.pass.style.opacity = 0; this.pass.style.pointerEvents = 'none';
     this.dots(); this.tick(); this.renderNotifs(); statusStyle(!WALL_DARK); document.body.classList.add('locked'); if (Island.touch) Island.hideTouch(); this.resetBehindLocked();
@@ -1986,6 +1987,8 @@ const Lock = {
   resetBehindLocked() { [byId('home'), byId('apps')].forEach(e => { e.style.transform = 'scale(1.1)'; e.style.opacity = '.3'; }); },
   toPass(v) {
     this.pass.style.pointerEvents = 'auto';
+    const fc=this.pass.querySelector('.lp-fc');if(fc)fc.hidden=!(S.faceUnlock&&AiboNative.available);
+    if(S.faceUnlock && AiboNative.available && !S.touchId && !this.faceTried){this.faceTried=true;setTimeout(()=>AiboNative.send('faceVerify'),600);}
     this.spr = spring({ from: this.y, to: -H, velocity: v || -900, ...SPR.snappy, onUpdate: y => { this.y = y; setTf(this.pane, 0, y); const p = clamp(-y / H, 0, 1); this.pass.style.opacity = Math.min(1, p * 1.6); setTf(this.pass.firstChild, 0, (1 - p) * 60, .94 + .06 * p); } });
     if (S.touchId && AiboNative.available) Island.showTouch(() => this.unlock(), 'Use Touch ID');
   },
@@ -3513,7 +3516,7 @@ const SetPages = {
     pg.c.innerHTML = UI.sec('Permissions', ['camera', 'microphone', 'geolocation'].map(k => UI.row({ title: k === 'geolocation' ? 'Location' : cap1(k), value: '<span data-perm="' + k + '">…</span>', tag: 'div' })), 'AiboOS asks for these only when you use Camera, Aibo voice or Maps. You can change them in your browser’s settings.') + UI.sec(null, [UI.row({ title: 'Data Stays on This Device', sub: 'Notes, photos, music and settings are saved here. Messages travel through Claude’s artifact storage.', tag: 'div' })]);
     $$('[data-perm]', pg.c).forEach(s => { if (!navigator.permissions) { s.textContent = 'Ask'; return; } navigator.permissions.query({ name: s.dataset.perm }).then(r => s.textContent = ({ granted: 'Allowed', denied: 'Off', prompt: 'Ask' })[r.state] || r.state).catch(() => s.textContent = 'Ask'); });
   } }),
-  passcode: () => ({ title: 'Touch ID & Passcode', render(pg) { pg.c.innerHTML = UI.sec('Use Touch ID For', [UI.row({ title: 'Unlocking AiboOS', toggle: !!S.touchId, act: 't:touchId', dis: !S.passcode })], 'Touch ID here is a press-and-hold on the sensor in the Dynamic Island (or the Home button on the desktop). Your passcode is what actually protects AiboOS.') + UI.sec(null, S.passcode ? [UI.row({ title: 'Turn Passcode Off', tint: true, act: 'passoff' }), UI.row({ title: 'Change Passcode', tint: true, act: 'passchange' })] : [UI.row({ title: 'Turn Passcode On', tint: true, act: 'passchange' })], S.passcode ? 'Your passcode is ' + S.passcode.length + ' digits.' : 'Without a passcode, anyone can swipe up to open AiboOS.'); }, act: setAct }),
+  passcode: () => ({ title: 'Touch ID & Passcode', render(pg) { pg.c.innerHTML = UI.sec('Use Touch ID For', [UI.row({ title: 'Unlocking AiboOS', toggle: !!S.touchId, act: 't:touchId', dis: !S.passcode })], 'Uses the real iPhone SE Touch ID sensor. Your passcode remains the fallback.') + UI.sec('Experimental Face Check', [UI.row({ title: 'Front Camera Face Check', toggle: !!S.faceUnlock, act: 'face:toggle', dis: !AiboNative.available }), UI.row({ title: S.faceEnrolled ? 'Re-enrol Face' : 'Set Up Face Check', tint: true, act: 'face:enroll', dis: !AiboNative.available }), UI.row({ title: 'Remove Face Data', red: true, act: 'face:remove', dis: !S.faceEnrolled })], 'OPTIONAL · LESS SECURE: 2D camera matching on the SE, not Apple Face ID or TrueDepth. Another person or a photograph may fool it. Do not use for sensitive authentication. Face geometry stays on your iPhone.') + UI.sec(null, S.passcode ? [UI.row({ title: 'Turn Passcode Off', tint: true, act: 'passoff' }), UI.row({ title: 'Change Passcode', tint: true, act: 'passchange' })] : [UI.row({ title: 'Turn Passcode On', tint: true, act: 'passchange' })], S.passcode ? 'Your passcode is ' + S.passcode.length + ' digits.' : 'Without a passcode, anyone can swipe up to open AiboOS.'); }, act: setAct }),
   dev: () => ({ title: 'Developer', render(pg) { pg.c.innerHTML = UI.sec('Graphics', [UI.seg('perf', [['auto', 'Automatic'], ['high', 'Full'], ['low', 'Efficient']], S.perf || 'auto')], 'Automatic measured ' + (PERF_STAT ? PERF_STAT.med.toFixed(1) + ' ms a frame on ' + PERF_STAT.cores + ' CPU cores' : 'this device') + ' and chose ' + (PERF_SLOW ? 'Efficient' : 'Full') + '. Efficient swaps live blur for pre-blurred glass, which keeps older phones like the iPhone SE smooth.') + UI.sec(null, [UI.row({ title: 'Replay Setup', tint: true, act: 'replay' })]); UI.segOn(pg.c, 'perf', v => { S.perf = v; applyTheme(); save(); }); }, act: setAct }),
   appcol: () => ({ title: 'App Colours', render(pg) { pg.c.innerHTML = UI.sec(null, S.installed.slice().sort((a, b) => appName(a).localeCompare(appName(b))).map(a => UI.row({ app: a, title: appName(a), value: (S.appTint && S.appTint[a]) ? '<span class="ac-dot" style="background:' + S.appTint[a] + '"></span>' + esc((TINTS.find(t => t[0] === S.appTint[a]) || ['', 'Custom'])[1]) : (APP_TINT_DEFAULT[a] && S.appColours !== false ? '<span class="ac-dot" style="background:' + APP_TINT_DEFAULT[a] + '"></span>Default' : 'AiboOS'), chev: 1, act: 'ac:' + a })), 'Give any app its own accent colour for its buttons, switches and highlights.') + UI.sec(null, [UI.row({ title: 'Built-in App Colours', toggle: S.appColours !== false, act: 'acall' })], 'Off makes every app use your AiboOS accent colour.'); }, act(a) { if (a === 'acall') { S.appColours = S.appColours === false; save(); applyCustom(); this.nav.refresh(this); return; } appColour(a.slice(3)); const pg = this; setTimeout(() => pg.nav.refresh(pg), 1500); }, onShow(pg) { pg.nav.refresh(pg); } }),
   custom: () => ({ title: 'Customise', render(pg) {
@@ -3543,6 +3546,17 @@ const SetPages = {
 function setAct(a, b, ev) {
   const pg = this, i = a.indexOf(':'), k = i < 0 ? a : a.slice(0, i), v = i < 0 ? '' : a.slice(i + 1);
   if (k === 'go') { pg.nav.push(SetPages[v]()); return; }
+  if (k === 'face') {
+    if (!AiboNative.available) {toast('Face Check needs the native AiboOS IPA','!','','red');return;}
+    if (v === 'remove' || (v==='toggle' && S.faceUnlock)) {
+      Alert.show({title:'Disable Face Check?',msg:'Remove the locally stored face-geometry template?',buttons:[
+        {t:'Cancel'},{t:'Remove',red:true,fn:()=>{S.faceUnlock=false;S.faceEnrolled=false;save();AiboNative.send('faceDisable');pg.nav.refresh(pg);}}]});
+      return;
+    }
+    Alert.show({title:'Face Check is less secure',msg:'Experimental 2D front-camera matching, NOT Apple Face ID. A photo or another person may fool it. Keep Touch ID and your passcode. No face photographs are stored.',buttons:[
+      {t:'Cancel'},{t:'I Understand',bold:true,fn:()=>AiboNative.send('faceEnroll')}]});
+    return;
+  }
   if (k === 'app') { openApp(v); return; }
   if (k === 't') {
     if (['air', 'wifi', 'bt', 'data', 'dnd'].indexOf(v) >= 0) CC.toggle(v);
