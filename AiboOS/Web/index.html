@@ -6211,74 +6211,105 @@ function sysTick() {
   const m = new Date().getMinutes(); if (m !== sysTick.m) { sysTick.m = m; Home.refreshIcon('clock'); Home.refreshIcon('calendar'); }
 }
 
-/* AiboOS-only on-screen keyboard. Outside apps and embedded websites retain iOS keyboard. */
+/* AiboOS on-screen keyboard; embedded web pages and external apps use system keyboard. */
 const AiboKeyboard = {
-  root:null,target:null,shift:false,symbols:false,
+  root: null, target: null, symbols: false, shift: false,
   init() {
-    if(this.root)return;
-    this.root=document.createElement('div');
-    this.root.className='aibo-keyboard';
-    this.root.setAttribute('role','group');
-    this.root.setAttribute('aria-label','AiboOS keyboard');
+    if (this.root) return;
+    this.root = document.createElement('div');
+    this.root.className = 'aibo-keyboard';
+    this.root.setAttribute('role', 'group');
+    this.root.setAttribute('aria-label', 'AiboOS keyboard');
     document.body.appendChild(this.root);
-    document.addEventListener('pointerdown',e=>{
-      const t=e.target;
-      if(this.root.contains(t))return;
-      const input=t.closest?.('input,textarea');
-      if(this.canUse(input)){
-        // Setting readOnly before native focus prevents the iOS software keyboard.
-        this.prepare(input);
-      }else if(this.target && !t.closest?.('.aibo-keyboard')){
-        this.hide();
-      }
-    },true);
-    document.addEventListener('focusin',e=>{
-      if(this.canUse(e.target)){this.prepare(e.target);this.show(e.target);}
-      else if(this.target && !this.root.contains(e.target))this.hide();
+    document.addEventListener('pointerdown', e => {
+      if (this.root.contains(e.target)) return;
+      const input = e.target.closest?.('input,textarea');
+      if (this.canUse(input)) this.prepare(input);
+      else if (this.target) this.hide();
+    }, true);
+    document.addEventListener('focusin', e => {
+      if (this.canUse(e.target)) {
+        this.prepare(e.target);
+        this.show(e.target);
+      } else if (this.target && !this.root.contains(e.target)) this.hide();
     });
-    // Retain focus/caret while tapping a key instead of blurring text input.
-    this.root.addEventListener('pointerdown',e=>e.preventDefault());
-    this.root.addEventListener('click',e=>{
-      const key=e.target.closest('button[data-key]');
-      if(key)this.press(key.dataset.key);
+    this.root.addEventListener('pointerdown', e => e.preventDefault());
+    this.root.addEventListener('click', e => {
+      const b = e.target.closest('button[data-key]');
+      if (b) this.press(b.dataset.key);
     });
   },
-  canUse(t){
-    if(!t || !(t instanceof HTMLElement))return false;
-    if(!NATIVE || S.aiboKeyboard===false || !S.setupDone)return false;
-    if(t.disabled || t.closest('.aibo-keyboard'))return false;
-    if(t.tagName==='TEXTAREA')return true;
-    if(t.tagName!=='INPUT')return false;
-    return ['text','search','email','tel','url','number',''].includes(t.type||'');
+  canUse(t) {
+    if (!t || !(t instanceof HTMLElement) || !NATIVE || S.aiboKeyboard === false || !S.setupDone) return false;
+    if (t.disabled || t.closest('.aibo-keyboard')) return false;
+    if (t.tagName === 'TEXTAREA') return true;
+    return t.tagName === 'INPUT' && ['text','search','email','tel','url','number',''].includes(t.type || '');
   },
-  prepare(t){
-    if(this.target && this.target!==t)this.restore(this.target);
-    if(!t.hasAttribute('data-aibo-readonly'))
-      t.setAttribute('data-aibo-readonly',t.readOnly?'1':'0');
-    t.readOnly=true;
+  prepare(t) {
+    if (this.target && this.target !== t) this.restore(this.target);
+    if (!t.hasAttribute('data-aibo-readonly')) t.setAttribute('data-aibo-readonly', t.readOnly ? '1' : '0');
+    t.readOnly = true;
   },
-  restore(t){
-    if(!t)return;
-    if(t.hasAttribute('data-aibo-readonly')){
-      t.readOnly=t.getAttribute('data-aibo-readonly')==='1';
-      t.removeAttribute('data-aibo-readonly');
-    }
+  restore(t) {
+    if (!t || !t.hasAttribute('data-aibo-readonly')) return;
+    t.readOnly = t.getAttribute('data-aibo-readonly') === '1';
+    t.removeAttribute('data-aibo-readonly');
   },
-  show(t){
-    this.target=t;this.draw();
+  show(t) {
+    this.target = t;
+    this.draw();
     this.root.classList.add('is-visible');
     document.body.classList.add('aibo-keyboard-visible');
   },
-  hide(){
-    this.restore(this.target);this.target=null;
-    if(this.root)this.root.classList.remove('is-visible');
+  hide() {
+    this.restore(this.target);
+    this.target = null;
+    if (this.root) this.root.classList.remove('is-visible');
     document.body.classList.remove('aibo-keyboard-visible');
   },
-  draw(){
-    if(!this.root)return;
-    const rows=this.symbols?
-      [['1','2','3','4','5','6','7','8','9','0'],['@','#','
-  layoutScreen(); applyTheme();
+  draw() {
+    if (!this.root) return;
+    const rows = this.symbols
+      ? [['1','2','3','4','5','6','7','8','9','0'],['@','#','$','%','&','-','+','(',')','/'],['ABC','*','!','?',':',';','_','=','⌫'],[',','space','.','return']]
+      : [['q','w','e','r','t','y','u','i','o','p'],['a','s','d','f','g','h','j','k','l'],['⇧','z','x','c','v','b','n','m','⌫'],['?123',',','space','.','return']];
+    this.root.innerHTML = rows.map(row => '<div class="aibo-keyboard-row">' + row.map(key => {
+      const cls = key === 'space' ? ' space' : key === 'return' ? ' enter' : ['⇧','⌫','?123','ABC'].includes(key) ? ' wide' : '';
+      const label = key.length === 1 && this.shift && !this.symbols ? key.toUpperCase() : key;
+      return '<button type="button" class="' + cls + '" data-key="' + esc(key) + '">' + esc(label) + '</button>';
+    }).join('') + '</div>').join('');
+  },
+  press(key) {
+    const t = this.target;
+    if (!t || !t.isConnected) { this.hide(); return; }
+    if (key === 'ABC' || key === '?123') { this.symbols = key === '?123'; this.draw(); return; }
+    if (key === '⇧') { this.shift = !this.shift; this.draw(); return; }
+    if (key === 'return') {
+      const evt = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+      const accepted = t.dispatchEvent(evt);
+      if (accepted && t.tagName === 'TEXTAREA') this.insert('\n');
+      else { this.hide(); t.blur(); }
+      return;
+    }
+    if (key === '⌫') { this.insert('', true); return; }
+    this.insert(key === 'space' ? ' ' : this.shift && !this.symbols ? key.toUpperCase() : key);
+    if (this.shift && !this.symbols) { this.shift = false; this.draw(); }
+  },
+  insert(text, backspace = false) {
+    const t = this.target;
+    if (!t) return;
+    const v = String(t.value || '');
+    let a = typeof t.selectionStart === 'number' ? t.selectionStart : v.length;
+    let b = typeof t.selectionEnd === 'number' ? t.selectionEnd : v.length;
+    if (backspace && a === b) a = Math.max(0, a - 1);
+    if (typeof t.maxLength === 'number' && t.maxLength >= 0 && v.length - (b - a) + text.length > t.maxLength) return;
+    t.value = v.slice(0,a) + text + v.slice(b);
+    try { t.setSelectionRange(a + text.length, a + text.length); } catch(e) {}
+    t.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+};
+
+async function boot() {
+  layoutScreen(); applyTheme(); AiboKeyboard.init(); AiboBatteryShutdown.init();
   Island.init(); Lock.init(); Home.init(); CC.init(); Aibo.init(); bindTopEdge(); bindHardware();
   renderStatus();
   const perf = measurePerf(650);
@@ -6290,7 +6321,7 @@ const AiboKeyboard = {
   if (typeof myAibo === 'function') myAibo();
   await PhoneMsgStore.init(S,idb);
   initDB(); initBattery(); AiboCloud.init();
-  if (hasClaude()) { try { claude.use('downloads').then(d => DLH.d = d || null).catch(() => { }); } catch (e) { } }
+  if (hasClaude()) { try { claude.use('downloads').then(d => DLH.d = d || null).catch(() => {}); } catch(e) {} }
   musicLoadSongs();
   setInterval(sysTick, 1000); sysTick();
   SYS_READY = true;
