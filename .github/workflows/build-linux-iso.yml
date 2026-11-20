@@ -91,6 +91,34 @@ jobs:
               raise SystemExit('Could not validate live-build Syslinux SVG conversion script')
           print('Old live-build SVG command compatibility check passed')
           PY
+      - name: Fix legacy live-build isohybrid dependency before long ISO build
+        run: |
+          set -euo pipefail
+          command -v isohybrid
+          dpkg -S "$(command -v isohybrid)"
+          grep -qx syslinux-utils linux-iso/packages.list.chroot
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          files = [Path('/usr/lib/live/build/lb_binary_iso'),
+                   Path('/usr/lib/live/build/binary_iso')]
+          before = 'Check_package chroot/usr/bin/isohybrid syslinux'
+          after = 'Check_package chroot/usr/bin/isohybrid syslinux-utils'
+          verified = False
+          for path in files:
+              if not path.exists():
+                  continue
+              content = path.read_text()
+              if before in content:
+                  content = content.replace(before, after)
+                  path.write_text(content)
+              if after in content:
+                  subprocess.run(['sh', '-n', str(path)], check=True)
+                  print('Verified isohybrid chroot dependency in', path)
+                  verified = True
+          if not verified:
+              raise SystemExit('Unable to verify isohybrid dependency; aborting before ISO bootstrap')
+          PY
       - name: Build bootable Debian live ISO
         run: sudo bash linux-iso/build.sh
       - name: Check image integrity

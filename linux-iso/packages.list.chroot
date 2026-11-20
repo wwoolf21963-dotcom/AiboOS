@@ -2,6 +2,7 @@
 # Select the Debian 13 systemd live backend explicitly. Do not install sysvinit.
 systemd-sysv
 live-config-systemd
+syslinux-utils
 live-task-xfce
 xfce4
 lightdm
