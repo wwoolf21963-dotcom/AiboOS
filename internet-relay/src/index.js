@@ -177,7 +177,7 @@ export default {
       const messageID=Number(data.serverId);
       if(!Number.isSafeInteger(messageID)||messageID<=0)return reply({error:"Invalid message"},400);
       await env.DB.prepare(
-        "UPDATE messages SET delivered_at=COALESCE(delivered_at,?) WHERE id=? AND to_id=?"
+        "UPDATE messages SET delivered_at=COALESCE(delivered_at,?), text='' WHERE id=? AND to_id=?"
       ).bind(Date.now(),messageID,me.id).run();
       return reply({ok:true});
    }
