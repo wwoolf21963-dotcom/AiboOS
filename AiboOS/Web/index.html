@@ -1145,6 +1145,21 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
 .as-warn{font-size:11px;color:var(--label2);border-left:3px solid #f0a14c;padding:6px 0 6px 10px;margin:9px 0}
 .as-status{font-size:12px;font-weight:600;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 
+
+/* AiboOS built-in keyboard; only direct AiboOS inputs, never iframes or external apps. */
+.aibo-keyboard{position:fixed;z-index:100090;bottom:0;left:0;right:0;display:none;
+  background:var(--bg2);padding:7px 5px max(9px,env(safe-area-inset-bottom));box-shadow:0 -4px 18px rgba(0,0,0,.33);
+  border-top:1px solid var(--sep);font-family:var(--font);user-select:none;-webkit-user-select:none}
+.aibo-keyboard.is-visible{display:block}
+.aibo-keyboard-row{display:flex;justify-content:center;gap:4px;margin:0 0 7px}
+.aibo-keyboard-row:last-child{margin-bottom:0}
+.aibo-keyboard button{flex:1;min-width:0;min-height:41px;border:0;border-radius:6px;
+  background:var(--cell-hi);color:var(--label);font-size:19px;box-shadow:0 1px 0 rgba(0,0,0,.25);
+  font-family:var(--font);touch-action:manipulation}
+.aibo-keyboard button.wide{flex:1.5;font-size:13px;background:var(--fill)}
+.aibo-keyboard button.space{flex:4;font-size:14px}
+.aibo-keyboard button.enter{background:var(--tint);color:#fff;font-size:14px}
+.aibo-keyboard-visible .compose{bottom:calc(var(--bottom) + 242px)}
 </style>
 </head>
 <body>
@@ -1520,7 +1535,7 @@ const DEFAULTS = {
   theme: 'dark', tint: '#ef5f7e', glass: 35, bright: 100, wall: 0, wallPhoto: false, lockFont: 'bold',
   h24: null, reduceMotion: false, reduceTransparency: false, boldText: false, textSize: 0, perf: 'auto',
   island: true, wifi: true, bt: true, air: false, data: true, dnd: false, lowPower: false,
-  passcode: '', touchId: true, vol: 0.6, btnSound: true, sfx: {}, appSfx: {},
+  passcode: '', touchId: true, aiboKeyboard: true, vol: 0.6, btnSound: true, sfx: {}, appSfx: {},
   apps: APP_ORDER.slice(), dock: ['phone', 'messages', 'aibobrowser', 'camera'], folders: {},
   installed: ['phone', 'messages', 'aibobrowser'].concat(APP_ORDER), names: {}, icons: {}, badges: {}, searchPill: true,
   notifs: [], notifAllow: {}, recents: [],
@@ -2020,7 +2035,7 @@ window.addEventListener('aibo-native', ev => {
   } else if (e.type === 'batteryStatus') {
     BATT.level = Number.isFinite(+e.level) && +e.level >= 0 ? Math.max(0,Math.min(1,+e.level)) : null;
     BATT.charging = !!e.charging;
-    renderStatus(); Bus.emit('battery');
+    renderStatus(); Bus.emit('battery'); checkBatteryAlerts();
   } else if (e.type === 'peerList') {
     AiboPeers.list = Array.isArray(e.peers) ? e.peers : [];
     Bus.emit('threads'); Bus.emit('aibo:peers');
@@ -2112,9 +2127,37 @@ function initBattery() {
   if (!navigator.getBattery) return;
   navigator.getBattery().then(b => {
     let first = true;
-    const up = () => { const was = BATT.charging; BATT.level = b.level; BATT.charging = b.charging; renderStatus(); if (b.charging && !was && SYS_READY && !first) onCharge(true); first = false; };
+    const up = () => { const was = BATT.charging; BATT.level = b.level; BATT.charging = b.charging; renderStatus(); checkBatteryAlerts(); if (b.charging && !was && SYS_READY && !first) onCharge(true); first = false; };
     up(); b.addEventListener('levelchange', up); b.addEventListener('chargingchange', up);
   }).catch(() => { });
+}
+/* AiboOS can display warnings, but it cannot change iOS system power settings or predict shutdown. */
+function checkBatteryAlerts() {
+  if (!SYS_READY || !S.setupDone || BATT.level == null) return;
+  const pct=Math.round(BATT.level*100);
+  if (BATT.charging) {
+    if(pct>25){BATT.warned20=false;BATT.warned10=false;}
+    else if(pct>15)BATT.warned10=false;
+    return;
+  }
+  let threshold=null;
+  if(pct<=10 && !BATT.warned10){BATT.warned10=true;BATT.warned20=true;threshold=10;}
+  else if(pct<=20 && pct>10 && !BATT.warned20){BATT.warned20=true;threshold=20;}
+  if(threshold===null)return;
+  Alert.show({
+    title:threshold===10?'Low Battery — 10%':'Low Battery — 20%',
+    msg:threshold===10?
+      'Your iPhone battery is critically low and may shut down soon. Connect a charger. You can enable AiboOS Low Power Mode to reduce app activity.':
+      'Your iPhone battery is running low. Enable AiboOS Low Power Mode to reduce effects and message checks.',
+    buttons:[
+      {t:'Cancel'},
+      {t:'Low Power Mode',bold:true,fn:()=>{
+        S.lowPower=true;applyTheme();save();renderStatus();
+        Bus.emit('settings');
+        toast('AiboOS Low Power Mode enabled');
+      }}
+    ]
+  });
 }
 function onCharge(on) {
   if (!on) return;
@@ -3854,7 +3897,8 @@ const SetPages = {
       UI.sec(null, [UI.row({ title: 'Choose from Photos', tint: true, act: 'wallphotos' }), UI.row({ title: 'Upload a Photo', tint: true, act: 'wallfile' })]);
     $$('canvas[data-w]', pg.c).forEach(c => WALLS[+c.dataset.w].paint(c.getContext('2d'), 60, 106));
   }, act: setAct }),
-  battery: () => ({ title: 'Battery', render(pg) { const p = BATT.level == null ? null : Math.round(BATT.level * 100); pg.c.innerHTML = '<div class="bat-big list"><span class="bb"><i style="width:' + (p == null ? 100 : p) + '%"></i></span><b>' + (p == null ? '—' : p + '%') + '</b><small>' + (p == null ? 'This browser doesn’t share the battery level.' : BATT.charging ? 'Charging' : 'On battery') + '</small></div>' + UI.sec(null, [UI.row({ icon: SYMS.low, bg: '#ffcc00', title: 'Low Power Mode', toggle: S.lowPower, act: 't:lowPower' })], 'Low Power Mode turns off live glass blur and other heavy effects so AiboOS uses less power.') + UI.sec(null, [UI.row({ title: 'Battery Percentage', toggle: S.battPct, act: 't:battPct' })], BATT.level == null ? 'Shows the battery percentage in the status bar. If battery level is unavailable, enable it for this app in iOS or check iPhone Settings.' : 'Shows the battery percentage next to the battery in the status bar.') + UI.sec('Battery Health', [UI.row({title:'Maximum Capacity',value:'Open iOS Battery Settings',tag:'div'})], 'Actual maximum capacity and cycle health cannot be read with public iOS app APIs. To see the real value, open iPhone Settings → Battery → Battery Health.') + UI.sec('Charging', [UI.row({ title: 'Charging Sound', value: esc(soundName(sfxFor('charge'))), chev: 1, act: 'sfx:charge' }), UI.row({ title: 'Play Charging Sound', tint: true, act: 'chargetest' })], (AiboNative.available || navigator.getBattery) ? 'The sound plays when the phone reports charging.' : 'This browser can’t tell when you plug in, so use Play Charging Sound to hear it.'); }, act: setAct }),
+  battery: () => ({ title: 'Battery', render(pg) { const p = BATT.level == null ? null : Math.round(BATT.level * 100); pg.c.innerHTML = '<div class="bat-big list"><span class="bb"><i style="width:' + (p == null ? 100 : p) + '%"></i></span><b>' + (p == null ? '—' : p + '%') + '</b><small>' + (p == null ? 'This browser doesn’t share the battery level.' : BATT.charging ? 'Charging' : 'On battery') + '</small></div>' + UI.sec(null, [UI.row({ icon: SYMS.low, bg: '#ffcc00', title: 'Low Power Mode', toggle: S.lowPower, act: 't:lowPower' })], 'AiboOS Low Power Mode reduces glass effects and checks for messages less often. It does not change the iPhone system Low Power Mode.') +
+      UI.sec('Keyboard', [UI.row({title:'AiboOS Keyboard',toggle:S.aiboKeyboard!==false,act:'t:aiboKeyboard'})], 'Use the AiboOS keyboard for built-in app text fields. Turn this off to use your normal iPhone keyboard. Other apps are unchanged.') + UI.sec(null, [UI.row({ title: 'Battery Percentage', toggle: S.battPct, act: 't:battPct' })], BATT.level == null ? 'Shows the battery percentage in the status bar. If battery level is unavailable, enable it for this app in iOS or check iPhone Settings.' : 'Shows the battery percentage next to the battery in the status bar.') + UI.sec('Battery Health', [UI.row({title:'Maximum Capacity',value:'Open iOS Battery Settings',tag:'div'})], 'Actual maximum capacity and cycle health cannot be read with public iOS app APIs. To see the real value, open iPhone Settings → Battery → Battery Health.') + UI.sec('Charging', [UI.row({ title: 'Charging Sound', value: esc(soundName(sfxFor('charge'))), chev: 1, act: 'sfx:charge' }), UI.row({ title: 'Play Charging Sound', tint: true, act: 'chargetest' })], (AiboNative.available || navigator.getBattery) ? 'The sound plays when the phone reports charging.' : 'This browser can’t tell when you plug in, so use Play Charging Sound to hear it.'); }, act: setAct }),
   privacy: () => ({ title: 'Privacy & Security', render(pg) {
     pg.c.innerHTML = UI.sec('Permissions', ['camera', 'microphone', 'geolocation'].map(k => UI.row({ title: k === 'geolocation' ? 'Location' : cap1(k), value: '<span data-perm="' + k + '">…</span>', tag: 'div' })), 'AiboOS asks for these only when you use Camera, Aibo voice or Maps. You can change them in your browser’s settings.') + UI.sec(null, [UI.row({ title: 'Data Stays on This Device', sub: 'Notes, photos, music and settings are saved here. Messages travel through Claude’s artifact storage.', tag: 'div' })]);
     $$('[data-perm]', pg.c).forEach(s => { if (!navigator.permissions) { s.textContent = 'Ask'; return; } navigator.permissions.query({ name: s.dataset.perm }).then(r => s.textContent = ({ granted: 'Allowed', denied: 'Off', prompt: 'Ask' })[r.state] || r.state).catch(() => s.textContent = 'Ask'); });
@@ -3904,6 +3948,7 @@ function setAct(a, b, ev) {
   if (k === 't') {
     if (['air', 'wifi', 'bt', 'data', 'dnd'].indexOf(v) >= 0) CC.toggle(v);
     else if (v === 'lowPower') { S.lowPower = !S.lowPower; applyTheme(); }
+    else if (v === 'aiboKeyboard') { S.aiboKeyboard = !(S.aiboKeyboard !== false); if(!S.aiboKeyboard)AiboKeyboard.hide(); }
     else if (v === 'island') { S.island = !S.island; Island.render(); }
     else { S[v] = !(S[v] !== false && S[v]); applyTheme(); applyCustom(); if (v === 'searchPill') Home.render(); }
     save(); renderStatus(); pg.nav.refresh(pg); Bus.emit('settings'); return;
@@ -4106,7 +4151,7 @@ const AiboCloud = {
     this.register();
     setInterval(() => {
       if (this.endingSession || !this.endpoint || document.hidden || navigator.onLine === false) return;
-      const interval = Msg.open ? 700 : 4000; // 0.7s only while actively viewing a chat
+      const interval = S.lowPower ? (Msg.open ? 3000 : 15000) : (Msg.open ? 700 : 4000); // prioritize battery while saving power
       if (this.ready && Date.now() - (this.lastSyncAttempt || 0) >= interval) this.sync();
       else if (!this.ready && !this.starting && Date.now() - (this.lastRegisterAttempt || 0) > 11000) this.register();
     }, 350);
@@ -6095,10 +6140,521 @@ function bindHardware() {
 }
 function sysTick() {
   renderStatus(); Lock.tick(); Island.tick(); clockTick(); calTick();
+  checkBatteryAlerts();
   const m = new Date().getMinutes(); if (m !== sysTick.m) { sysTick.m = m; Home.refreshIcon('clock'); Home.refreshIcon('calendar'); }
 }
-async function boot() {
+
+/* AiboOS-only on-screen keyboard. Outside apps and embedded websites retain iOS keyboard. */
+const AiboKeyboard = {
+  root:null,target:null,shift:false,symbols:false,
+  init() {
+    if(this.root)return;
+    this.root=document.createElement('div');
+    this.root.className='aibo-keyboard';
+    this.root.setAttribute('role','group');
+    this.root.setAttribute('aria-label','AiboOS keyboard');
+    document.body.appendChild(this.root);
+    document.addEventListener('pointerdown',e=>{
+      const t=e.target;
+      if(this.root.contains(t))return;
+      const input=t.closest?.('input,textarea');
+      if(this.canUse(input)){
+        // Setting readOnly before native focus prevents the iOS software keyboard.
+        this.prepare(input);
+      }else if(this.target && !t.closest?.('.aibo-keyboard')){
+        this.hide();
+      }
+    },true);
+    document.addEventListener('focusin',e=>{
+      if(this.canUse(e.target)){this.prepare(e.target);this.show(e.target);}
+      else if(this.target && !this.root.contains(e.target))this.hide();
+    });
+    // Retain focus/caret while tapping a key instead of blurring text input.
+    this.root.addEventListener('pointerdown',e=>e.preventDefault());
+    this.root.addEventListener('click',e=>{
+      const key=e.target.closest('button[data-key]');
+      if(key)this.press(key.dataset.key);
+    });
+  },
+  canUse(t){
+    if(!t || !(t instanceof HTMLElement))return false;
+    if(!NATIVE || S.aiboKeyboard===false || !S.setupDone)return false;
+    if(t.disabled || t.closest('.aibo-keyboard'))return false;
+    if(t.tagName==='TEXTAREA')return true;
+    if(t.tagName!=='INPUT')return false;
+    return ['text','search','email','tel','url','number',''].includes(t.type||'');
+  },
+  prepare(t){
+    if(this.target && this.target!==t)this.restore(this.target);
+    if(!t.hasAttribute('data-aibo-readonly'))
+      t.setAttribute('data-aibo-readonly',t.readOnly?'1':'0');
+    t.readOnly=true;
+  },
+  restore(t){
+    if(!t)return;
+    if(t.hasAttribute('data-aibo-readonly')){
+      t.readOnly=t.getAttribute('data-aibo-readonly')==='1';
+      t.removeAttribute('data-aibo-readonly');
+    }
+  },
+  show(t){
+    this.target=t;this.draw();
+    this.root.classList.add('is-visible');
+    document.body.classList.add('aibo-keyboard-visible');
+  },
+  hide(){
+    this.restore(this.target);this.target=null;
+    if(this.root)this.root.classList.remove('is-visible');
+    document.body.classList.remove('aibo-keyboard-visible');
+  },
+  draw(){
+    if(!this.root)return;
+    const rows=this.symbols?
+      [['1','2','3','4','5','6','7','8','9','0'],['@','#','
   layoutScreen(); applyTheme();
+  Island.init(); Lock.init(); Home.init(); CC.init(); Aibo.init(); bindTopEdge(); bindHardware();
+  renderStatus();
+  const perf = measurePerf(650);
+  const wall = buildWallpaper();
+  await bootScreen();
+  PERF_STAT = await perf; await wall; applyTheme(); applyCustom();
+  if (!S.aiboThemeApplied) { S.aiboThemeApplied = true; applyThemePreset('aibo'); await new Promise(r => setTimeout(r, 50)); }
+  Home.render();
+  if (typeof myAibo === 'function') myAibo();
+  await PhoneMsgStore.init(S,idb);
+  initDB(); initBattery(); AiboCloud.init();
+  if (hasClaude()) { try { claude.use('downloads').then(d => DLH.d = d || null).catch(() => { }); } catch (e) { } }
+  musicLoadSongs();
+  setInterval(sysTick, 1000); sysTick();
+  SYS_READY = true;
+  if (!S.setupDone) { Setup.start(); return; }
+  Lock.lock(); Lock.resetBehindLocked();
+  const b = byId('boot'); tween({ duration: 420, from: 1, to: 0, onUpdate: v => b.style.opacity = v, onDone: () => { b.style.display = 'none'; b.innerHTML = ''; } });
+}
+window.addEventListener('error', e => console.error('AiboOS:', e.message));
+boot();
+
+/* ==== 26_security.js ==== */
+/* ===================== security ===================== */
+const AppLock = {
+  granted: {},
+  isLocked(id) { return (S.lockedApps || []).indexOf(id) >= 0; },
+  ok(id) { return this.granted[id] && Date.now() - this.granted[id] < 60000; },
+  grant(id) { this.granted[id] = Date.now(); },
+  ask(id, proceed) {
+    const host = byId('overlay');
+    const g = el('<div class="applock"><div class="al-wall"></div><div class="al-mid"><div class="al-ic">' + iconHTML(id) + '</div><b>' + esc(appName(id)) + '</b><span class="al-sub"></span><div class="al-pad"></div></div><button class="al-cancel">Cancel</button></div>');
+    host.appendChild(g); syncOverlay();
+    g.querySelector('.al-wall').style.backgroundImage = 'url(' + WALL_BLUR + ')';
+    g.style.opacity = 0; tween({ duration: 200, onUpdate: v => g.style.opacity = v });
+    const finish = ok => { if (Island.touch) Island.hideTouch(); tween({ duration: 180, from: 1, to: 0, onUpdate: v => g.style.opacity = v, onDone: () => { g.remove(); syncOverlay(); } }); if (ok) { this.grant(id); proceed(); } };
+    g.__cancel = () => finish(false);
+    const pad = g.querySelector('.al-pad'), sub = g.querySelector('.al-sub');
+    const usePass = () => { Island.hideTouch(); pad.innerHTML = ''; sub.textContent = 'Enter your passcode'; pad.appendChild(PassPad({ steps: [{ title: '', check: S.passcode, len: S.passcode.length }], done: () => finish(true) })); };
+    g.querySelector('.al-cancel').onclick = () => finish(false);
+    if (S.touchId && S.passcode && AiboNative.available) { sub.textContent = 'Use Touch ID'; pad.innerHTML = '<button class="btn-g press al-usepass">Enter Passcode</button>'; pad.querySelector('.al-usepass').onclick = usePass; Island.showTouch(() => finish(true), 'Hold for Touch ID'); }
+    else usePass();
+  }
+};
+if (typeof openApp === 'function') {
+  const _openApp = openApp;
+  openApp = function (id, fromEl) {
+    if (id && AppLock.isLocked(id) && !AppLock.ok(id) && S.passcode && S.installed.indexOf(id) >= 0 && id !== CUR_APP && !(Lock.locked && Lock.mode !== 'nc')) { AppLock.ask(id, () => _openApp(id, fromEl)); return; }
+    _openApp(id, fromEl);
+  };
+}
+Bus.on('lock', () => { AppLock.granted = {}; });
+/* homePress should dismiss the App Lock gate */
+(function () { const _hp = typeof homePress === 'function' ? homePress : null; if (_hp) { homePress = function () { const g = byId('overlay').querySelector('.applock'); if (g && g.__cancel) { g.__cancel(); return; } _hp(); }; } })();
+
+/* auto-lock + lock-on-exit + erase after failed attempts */
+let lastActivity = Date.now();
+['pointerdown', 'keydown'].forEach(t => document.addEventListener(t, () => lastActivity = Date.now(), { capture: true, passive: true }));
+setInterval(() => {
+  if (!SYS_READY || Lock.locked || !S.passcode) return;
+  if (S.autoLock > 0 && Date.now() - lastActivity > S.autoLock * 1000) Lock.lock();
+}, 2000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && !Lock.locked && S.passcode && S.lockOnExit) { Lock.lock(); saveNow(); } });
+
+/* wrap the passcode check to count failures and (optionally) erase */
+(function () {
+  const _check = Lock.check.bind(Lock);
+  Lock.check = function () {
+    const right = this.entry === S.passcode;
+    if (right) { S.failCount = 0; save(); }
+    else {
+      S.failCount = (S.failCount || 0) + 1; save();
+      if (S.eraseOnFail && S.failCount >= 10) { eraseAll(true); return; }
+      if (S.eraseOnFail && S.failCount >= 7) setTimeout(() => { this.pass.querySelector('.lp-t').textContent = (10 - S.failCount) + ' attempts before erase'; }, 300);
+    }
+    _check();
+  };
+})();
+
+/* ===================== Privacy & Security settings ===================== */
+SetPages.privacy = () => ({
+  title: 'Privacy & Security', render(pg) {
+    const AL = { 0: 'Never', 30: '30 Seconds', 60: '1 Minute', 120: '2 Minutes', 300: '5 Minutes' };
+    const r = UI.row;
+    pg.c.innerHTML =
+      UI.sec('Passcode & Touch ID', [r({ title: 'Touch ID & Passcode', chev: 1, act: 'go:passcode' })]) +
+      UI.sec('Auto-Lock', [r({ title: 'Lock After', value: AL[S.autoLock == null ? 120 : S.autoLock] || 'Never', chev: 1, act: 'autolock', dis: !S.passcode }), r({ title: 'Lock When Closed', sub: 'Lock as soon as you leave AiboOS', toggle: !!S.lockOnExit, act: 't:lockOnExit', dis: !S.passcode })], S.passcode ? '' : 'Set a passcode first to use these.') +
+      UI.sec('App Lock', [r({ title: 'Locked Apps', value: (S.lockedApps || []).length ? (S.lockedApps.length + ' app' + (S.lockedApps.length === 1 ? '' : 's')) : 'None', chev: 1, act: 'go:lockedapps', dis: !S.passcode })], 'Locked apps ask for Touch ID or your passcode every time they open.') +
+      UI.sec('Data Protection', [r({ title: 'Erase After 10 Failed Passcodes', toggle: !!S.eraseOnFail, act: 't:eraseOnFail', dis: !S.passcode, red: true })], 'Everything on this device is erased after 10 wrong passcodes in a row. There’s no undo.') +
+      UI.sec('App Permissions', ['camera', 'microphone', 'geolocation'].map(k => r({ title: k === 'geolocation' ? 'Location' : cap1(k), value: '<span data-perm="' + k + '">…</span>', tag: 'div' })), 'Change these in your browser’s settings.') +
+      UI.sec('Where Your Data Lives', [r({ title: 'On This Device', sub: 'Notes, photos, music, passcode and settings stay on this phone.', tag: 'div' }), r({ title: 'Messages', sub: AIBODB ? 'Travel through Claude’s secure storage by AiboID.' : 'Kept on this device until AiboOS is open in Claude.', tag: 'div' })]);
+    $$('[data-perm]', pg.c).forEach(s => { if (!navigator.permissions) { s.textContent = 'Ask'; return; } navigator.permissions.query({ name: s.dataset.perm }).then(x => s.textContent = ({ granted: 'Allowed', denied: 'Off', prompt: 'Ask' })[x.state] || x.state).catch(() => s.textContent = 'Ask'); });
+  },
+  act(a) {
+    if (a === 'autolock') { ActionSheet.show('Lock After', [['Never', 0], ['30 Seconds', 30], ['1 Minute', 60], ['2 Minutes', 120], ['5 Minutes', 300]].map(o => ({ t: o[0], fn: () => { S.autoLock = o[1]; save(); this.nav.refresh(this); } }))); return; }
+    if (a.indexOf('t:') === 0) { const k = a.slice(2); if (k === 'eraseOnFail' && !S.eraseOnFail) { Alert.show({ title: 'Erase after 10 tries?', msg: 'If someone enters the wrong passcode 10 times, everything on this device is erased. This can’t be undone.', buttons: [{ t: 'Cancel' }, { t: 'Turn On', red: true, fn: () => { S.eraseOnFail = true; save(); this.nav.refresh(this); } }] }); return; } S[k] = !S[k]; save(); this.nav.refresh(this); return; }
+    setAct.call(this, a);
+  },
+  onShow(pg) { pg.nav.refresh(pg); }
+});
+SetPages.lockedapps = () => ({
+  title: 'Locked Apps', render(pg) {
+    S.lockedApps = S.lockedApps || [];
+    pg.c.innerHTML = UI.sec(null, S.installed.filter(a => a !== 'settings').sort((a, b) => appName(a).localeCompare(appName(b))).map(a => UI.row({ app: a, title: appName(a), toggle: S.lockedApps.indexOf(a) >= 0, act: 'lk:' + a })), 'These apps need Touch ID or your passcode to open. Settings can’t be locked, so you can always get back here.');
+  },
+  act(a) { const id = a.slice(3); S.lockedApps = S.lockedApps || []; const i = S.lockedApps.indexOf(id); if (i >= 0) S.lockedApps.splice(i, 1); else S.lockedApps.push(id); save(); this.nav.refresh(this); },
+  onShow(pg) { pg.nav.refresh(pg); }
+});
+/* surface it in Settings search */
+SET_INDEX.push(['App Lock', 'privacy'], ['Auto-Lock', 'privacy'], ['Erase Data', 'privacy'], ['Locked Apps', 'lockedapps'], ['Security', 'privacy']);
+
+/* ==== 27_webapps.js ==== */
+/* ===================== Web Apps: install any website as a real app ===================== */
+const WEBAPP_SUGGEST = [
+  { name: 'YouTube', url: 'https://m.youtube.com', color: '#ff0033', cat: 'Entertainment' },
+  { name: 'Netflix', url: 'https://www.netflix.com', color: '#e50914', cat: 'Entertainment' },
+  { name: 'Disney+', url: 'https://www.disneyplus.com', color: '#113ccf', cat: 'Entertainment' },
+  { name: 'Prime Video', url: 'https://www.primevideo.com', color: '#1399ff', cat: 'Entertainment' },
+  { name: 'Twitch', url: 'https://m.twitch.tv', color: '#9146ff', cat: 'Entertainment' },
+  { name: 'Max', url: 'https://play.max.com', color: '#4e22b6', cat: 'Entertainment' },
+  { name: 'Hulu', url: 'https://www.hulu.com', color: '#1ce783', cat: 'Entertainment' },
+  { name: 'BBC iPlayer', url: 'https://www.bbc.co.uk/iplayer', color: '#ff4e98', cat: 'Entertainment' },
+  { name: 'ITVX', url: 'https://www.itv.com', color: '#1a1a1a', cat: 'Entertainment' },
+  { name: 'Channel 4', url: 'https://www.channel4.com', color: '#1a1a1a', cat: 'Entertainment' },
+  { name: 'Crunchyroll', url: 'https://www.crunchyroll.com', color: '#f47521', cat: 'Entertainment' },
+  { name: 'Vimeo', url: 'https://vimeo.com', color: '#1ab7ea', cat: 'Entertainment' },
+  { name: 'Dailymotion', url: 'https://www.dailymotion.com', color: '#0066dc', cat: 'Entertainment' },
+  { name: 'Plex', url: 'https://app.plex.tv', color: '#e5a00d', cat: 'Entertainment' },
+  { name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', cat: 'Music' },
+  { name: 'Apple Music', url: 'https://music.apple.com', color: '#fa2d48', cat: 'Music' },
+  { name: 'YouTube Music', url: 'https://music.youtube.com', color: '#ff0033', cat: 'Music' },
+  { name: 'SoundCloud', url: 'https://soundcloud.com', color: '#ff5500', cat: 'Music' },
+  { name: 'Deezer', url: 'https://www.deezer.com', color: '#a238ff', cat: 'Music' },
+  { name: 'Tidal', url: 'https://listen.tidal.com', color: '#000000', cat: 'Music' },
+  { name: 'Amazon Music', url: 'https://music.amazon.com', color: '#25d1da', cat: 'Music' },
+  { name: 'Bandcamp', url: 'https://bandcamp.com', color: '#629aa9', cat: 'Music' },
+  { name: 'Audible', url: 'https://www.audible.com', color: '#f8991c', cat: 'Music' },
+  { name: 'Last.fm', url: 'https://www.last.fm', color: '#d51007', cat: 'Music' },
+  { name: 'Shazam', url: 'https://www.shazam.com', color: '#0088ff', cat: 'Music' },
+  { name: 'X', url: 'https://x.com', color: '#111111', cat: 'Social' },
+  { name: 'Instagram', url: 'https://www.instagram.com', color: '#e1306c', cat: 'Social' },
+  { name: 'Facebook', url: 'https://m.facebook.com', color: '#1877f2', cat: 'Social' },
+  { name: 'Reddit', url: 'https://www.reddit.com', color: '#ff4500', cat: 'Social' },
+  { name: 'Discord', url: 'https://discord.com/app', color: '#5865f2', cat: 'Social' },
+  { name: 'WhatsApp', url: 'https://web.whatsapp.com', color: '#25d366', cat: 'Social' },
+  { name: 'Telegram', url: 'https://web.telegram.org', color: '#2aabee', cat: 'Social' },
+  { name: 'Messenger', url: 'https://www.messenger.com', color: '#00b2ff', cat: 'Social' },
+  { name: 'Snapchat', url: 'https://web.snapchat.com', color: '#fffc00', cat: 'Social' },
+  { name: 'Pinterest', url: 'https://www.pinterest.com', color: '#e60023', cat: 'Social' },
+  { name: 'LinkedIn', url: 'https://www.linkedin.com', color: '#0a66c2', cat: 'Social' },
+  { name: 'TikTok', url: 'https://www.tiktok.com', color: '#010101', cat: 'Social' },
+  { name: 'Tumblr', url: 'https://www.tumblr.com', color: '#36465d', cat: 'Social' },
+  { name: 'Mastodon', url: 'https://mastodon.social', color: '#6364ff', cat: 'Social' },
+  { name: 'Bluesky', url: 'https://bsky.app', color: '#1185fe', cat: 'Social' },
+  { name: 'Threads', url: 'https://www.threads.net', color: '#111111', cat: 'Social' },
+  { name: 'Quora', url: 'https://www.quora.com', color: '#b92b27', cat: 'Social' },
+  { name: 'Twitch Chat', url: 'https://www.twitch.tv', color: '#9146ff', cat: 'Social' },
+  { name: 'Gmail', url: 'https://mail.google.com', color: '#ea4335', cat: 'Productivity' },
+  { name: 'Outlook', url: 'https://outlook.live.com', color: '#0078d4', cat: 'Productivity' },
+  { name: 'Proton Mail', url: 'https://mail.proton.me', color: '#6d4aff', cat: 'Productivity' },
+  { name: 'Yahoo Mail', url: 'https://mail.yahoo.com', color: '#6001d2', cat: 'Productivity' },
+  { name: 'Google Docs', url: 'https://docs.google.com', color: '#4285f4', cat: 'Productivity' },
+  { name: 'Google Sheets', url: 'https://sheets.google.com', color: '#0f9d58', cat: 'Productivity' },
+  { name: 'Google Slides', url: 'https://slides.google.com', color: '#f4b400', cat: 'Productivity' },
+  { name: 'Google Drive', url: 'https://drive.google.com', color: '#1fa463', cat: 'Productivity' },
+  { name: 'Google Keep', url: 'https://keep.google.com', color: '#fbbc04', cat: 'Productivity' },
+  { name: 'Google Calendar', url: 'https://calendar.google.com', color: '#4285f4', cat: 'Productivity' },
+  { name: 'Notion', url: 'https://www.notion.so', color: '#111111', cat: 'Productivity' },
+  { name: 'Todoist', url: 'https://todoist.com', color: '#e44332', cat: 'Productivity' },
+  { name: 'Trello', url: 'https://trello.com', color: '#0079bf', cat: 'Productivity' },
+  { name: 'Asana', url: 'https://app.asana.com', color: '#f06a6a', cat: 'Productivity' },
+  { name: 'Evernote', url: 'https://www.evernote.com', color: '#00a82d', cat: 'Productivity' },
+  { name: 'Dropbox', url: 'https://www.dropbox.com', color: '#0061ff', cat: 'Productivity' },
+  { name: 'OneDrive', url: 'https://onedrive.live.com', color: '#0364b8', cat: 'Productivity' },
+  { name: 'Microsoft 365', url: 'https://www.office.com', color: '#d83b01', cat: 'Productivity' },
+  { name: 'Slack', url: 'https://app.slack.com', color: '#4a154b', cat: 'Productivity' },
+  { name: 'Teams', url: 'https://teams.microsoft.com', color: '#6264a7', cat: 'Productivity' },
+  { name: 'Zoom', url: 'https://zoom.us', color: '#2d8cff', cat: 'Productivity' },
+  { name: 'Grammarly', url: 'https://app.grammarly.com', color: '#15c39a', cat: 'Productivity' },
+  { name: 'Google', url: 'https://www.google.com', color: '#4285f4', cat: 'Search & AI' },
+  { name: 'Bing', url: 'https://www.bing.com', color: '#008373', cat: 'Search & AI' },
+  { name: 'DuckDuckGo', url: 'https://duckduckgo.com', color: '#de5833', cat: 'Search & AI' },
+  { name: 'Wikipedia', url: 'https://en.m.wikipedia.org', color: '#1c1c1e', cat: 'Search & AI' },
+  { name: 'ChatGPT', url: 'https://chatgpt.com', color: '#10a37f', cat: 'Search & AI' },
+  { name: 'Claude', url: 'https://claude.ai', color: '#d97757', cat: 'Search & AI' },
+  { name: 'Gemini', url: 'https://gemini.google.com', color: '#1a73e8', cat: 'Search & AI' },
+  { name: 'Perplexity', url: 'https://www.perplexity.ai', color: '#20808d', cat: 'Search & AI' },
+  { name: 'Wolfram Alpha', url: 'https://www.wolframalpha.com', color: '#dd1100', cat: 'Search & AI' },
+  { name: 'Google Translate', url: 'https://translate.google.com', color: '#4285f4', cat: 'Search & AI' },
+  { name: 'DeepL', url: 'https://www.deepl.com', color: '#0f2b46', cat: 'Search & AI' },
+  { name: 'Stack Overflow', url: 'https://stackoverflow.com', color: '#f48024', cat: 'Search & AI' },
+  { name: 'GitHub', url: 'https://github.com', color: '#171515', cat: 'Search & AI' },
+  { name: 'Amazon', url: 'https://www.amazon.co.uk', color: '#ff9900', cat: 'Shopping' },
+  { name: 'eBay', url: 'https://www.ebay.co.uk', color: '#e53238', cat: 'Shopping' },
+  { name: 'Etsy', url: 'https://www.etsy.com', color: '#f45800', cat: 'Shopping' },
+  { name: 'AliExpress', url: 'https://www.aliexpress.com', color: '#e62e04', cat: 'Shopping' },
+  { name: 'Argos', url: 'https://www.argos.co.uk', color: '#ed1b24', cat: 'Shopping' },
+  { name: 'ASOS', url: 'https://www.asos.com', color: '#2d2d2d', cat: 'Shopping' },
+  { name: 'Shein', url: 'https://www.shein.co.uk', color: '#000000', cat: 'Shopping' },
+  { name: 'Temu', url: 'https://www.temu.com', color: '#fb7701', cat: 'Shopping' },
+  { name: 'Depop', url: 'https://www.depop.com', color: '#ff2300', cat: 'Shopping' },
+  { name: 'Vinted', url: 'https://www.vinted.co.uk', color: '#09b1ba', cat: 'Shopping' },
+  { name: 'IKEA', url: 'https://www.ikea.com', color: '#0058a3', cat: 'Shopping' },
+  { name: 'BBC News', url: 'https://www.bbc.co.uk/news', color: '#bb1919', cat: 'News' },
+  { name: 'The Guardian', url: 'https://www.theguardian.com', color: '#052962', cat: 'News' },
+  { name: 'CNN', url: 'https://edition.cnn.com', color: '#cc0000', cat: 'News' },
+  { name: 'Sky News', url: 'https://news.sky.com', color: '#f90301', cat: 'News' },
+  { name: 'Reuters', url: 'https://www.reuters.com', color: '#ff8000', cat: 'News' },
+  { name: 'The New York Times', url: 'https://www.nytimes.com', color: '#1a1a1a', cat: 'News' },
+  { name: 'Al Jazeera', url: 'https://www.aljazeera.com', color: '#fa9000', cat: 'News' },
+  { name: 'Bloomberg', url: 'https://www.bloomberg.com', color: '#1a1a1a', cat: 'News' },
+  { name: 'Google News', url: 'https://news.google.com', color: '#4285f4', cat: 'News' },
+  { name: 'Google Maps', url: 'https://maps.google.com', color: '#34a853', cat: 'Travel & Maps' },
+  { name: 'Citymapper', url: 'https://citymapper.com', color: '#00d1b0', cat: 'Travel & Maps' },
+  { name: 'Uber', url: 'https://m.uber.com', color: '#111111', cat: 'Travel & Maps' },
+  { name: 'Bolt', url: 'https://bolt.eu', color: '#34d186', cat: 'Travel & Maps' },
+  { name: 'Airbnb', url: 'https://www.airbnb.co.uk', color: '#ff385c', cat: 'Travel & Maps' },
+  { name: 'Booking.com', url: 'https://www.booking.com', color: '#003580', cat: 'Travel & Maps' },
+  { name: 'Skyscanner', url: 'https://www.skyscanner.net', color: '#0770e3', cat: 'Travel & Maps' },
+  { name: 'Trainline', url: 'https://www.thetrainline.com', color: '#00a88e', cat: 'Travel & Maps' },
+  { name: 'National Rail', url: 'https://www.nationalrail.co.uk', color: '#1d1d1b', cat: 'Travel & Maps' },
+  { name: 'Google Flights', url: 'https://www.google.com/travel/flights', color: '#4285f4', cat: 'Travel & Maps' },
+  { name: 'PayPal', url: 'https://www.paypal.com', color: '#003087', cat: 'Finance' },
+  { name: 'Monzo', url: 'https://monzo.com', color: '#14233c', cat: 'Finance' },
+  { name: 'Revolut', url: 'https://www.revolut.com', color: '#0666eb', cat: 'Finance' },
+  { name: 'Wise', url: 'https://wise.com', color: '#9fe870', cat: 'Finance' },
+  { name: 'Coinbase', url: 'https://www.coinbase.com', color: '#0052ff', cat: 'Finance' },
+  { name: 'Binance', url: 'https://www.binance.com', color: '#f0b90b', cat: 'Finance' },
+  { name: 'Cash App', url: 'https://cash.app', color: '#00d632', cat: 'Finance' },
+  { name: 'Trading 212', url: 'https://www.trading212.com', color: '#00aaff', cat: 'Finance' },
+  { name: 'Deliveroo', url: 'https://deliveroo.co.uk', color: '#00ccbc', cat: 'Food' },
+  { name: 'Uber Eats', url: 'https://www.ubereats.com', color: '#06c167', cat: 'Food' },
+  { name: 'Just Eat', url: 'https://www.just-eat.co.uk', color: '#ff8000', cat: 'Food' },
+  { name: "Domino's", url: 'https://www.dominos.co.uk', color: '#006491', cat: 'Food' },
+  { name: 'Starbucks', url: 'https://www.starbucks.com', color: '#00704a', cat: 'Food' },
+  { name: 'Chess.com', url: 'https://www.chess.com', color: '#769656', cat: 'Games' },
+  { name: 'Lichess', url: 'https://lichess.org', color: '#111111', cat: 'Games' },
+  { name: 'Wordle', url: 'https://www.nytimes.com/games/wordle', color: '#6aaa64', cat: 'Games' },
+  { name: 'Poki', url: 'https://poki.com', color: '#1a1a1a', cat: 'Games' },
+  { name: 'CrazyGames', url: 'https://www.crazygames.com', color: '#6948ff', cat: 'Games' },
+  { name: 'Solitaire', url: 'https://www.solitr.com', color: '#2e7d32', cat: 'Games' },
+  { name: 'Strava', url: 'https://www.strava.com', color: '#fc4c02', cat: 'Health & Fitness' },
+  { name: 'MyFitnessPal', url: 'https://www.myfitnesspal.com', color: '#0070eb', cat: 'Health & Fitness' },
+  { name: 'Headspace', url: 'https://www.headspace.com', color: '#ff7800', cat: 'Health & Fitness' },
+  { name: 'Calm', url: 'https://www.calm.com', color: '#2e5bdc', cat: 'Health & Fitness' },
+  { name: 'NHS', url: 'https://www.nhs.uk', color: '#005eb8', cat: 'Health & Fitness' },
+  { name: 'Google Photos', url: 'https://photos.google.com', color: '#fbbc05', cat: 'Photo & Design' },
+  { name: 'Canva', url: 'https://www.canva.com', color: '#00c4cc', cat: 'Photo & Design' },
+  { name: 'Figma', url: 'https://www.figma.com', color: '#f24e1e', cat: 'Photo & Design' },
+  { name: 'Unsplash', url: 'https://unsplash.com', color: '#111111', cat: 'Photo & Design' },
+  { name: 'Pexels', url: 'https://www.pexels.com', color: '#05a081', cat: 'Photo & Design' },
+  { name: 'Giphy', url: 'https://giphy.com', color: '#ff6666', cat: 'Photo & Design' },
+  { name: 'Photopea', url: 'https://www.photopea.com', color: '#18a497', cat: 'Photo & Design' },
+  { name: 'Flickr', url: 'https://www.flickr.com', color: '#ff0084', cat: 'Photo & Design' },
+  { name: 'Speedtest', url: 'https://www.speedtest.net', color: '#141526', cat: 'Utilities' },
+  { name: 'Met Office', url: 'https://www.metoffice.gov.uk', color: '#003399', cat: 'Utilities' },
+  { name: 'Time and Date', url: 'https://www.timeanddate.com', color: '#1a6fb5', cat: 'Utilities' },
+  { name: 'Archive.org', url: 'https://archive.org', color: '#333333', cat: 'Utilities' },
+  { name: 'Google Forms', url: 'https://forms.google.com', color: '#7248b9', cat: 'Utilities' },
+  { name: 'Linktree', url: 'https://linktr.ee', color: '#39e09b', cat: 'Utilities' }
+];
+function webDomain(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return String(u).replace(/^https?:\/\//, '').split('/')[0]; } }
+function faviconURL(dom) { return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(dom) + '&sz=128'; }
+function webChip(name, url, color) { var L = esc((String(name).trim()[0] || '?').toUpperCase()); return '<span class="wa-let">' + L + '</span><img src="' + faviconURL(webDomain(url)) + '" alt="" loading="lazy" onerror="this.remove()">'; }
+function webIconSVG(name, color) {
+  const ch = (name || '?').trim()[0].toUpperCase();
+  return mkIcon([color, shade(color, -22)], '<text x="30" y="40" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="30" font-weight="700" text-anchor="middle" fill="#fff">' + esc(ch) + '</text>');
+}
+function registerWebApp(wa) {
+  APP_NAMES[wa.id] = wa.name;
+  ICON_SRC[wa.id] = () => webIconSVG(wa.name, wa.color);
+  APP_TINT_DEFAULT[wa.id] = wa.color;
+}
+function openWebApp(wa) {
+  const a = document.createElement('a'); a.href = wa.url; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  toast('Opening ' + wa.name, '<svg viewBox="0 0 20 20" width="14"><path d="M11 3h6v6M17 3l-8 8M14 12v5H3V6h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>', 'Web', 'blue');
+}
+const webApp = id => (S.webApps || []).find(w => w.id === id);
+/* tapping a web app opens the real site in the browser (a user gesture, so it's allowed) */
+(function () {
+  const _open = openApp;
+  openApp = function (id, fromEl) { const wa = webApp(id); if (wa) { openWebApp(wa); return; } _open(id, fromEl); };
+})();
+function installWebApp(wa) {
+  if (!storeOnline()) { Alert.show({ title: 'No Internet Connection', msg: 'Adding a web app needs Wi‑Fi or mobile data.', buttons: [{ t: 'OK', bold: true }] }); return false; }
+  const id = 'wa_' + hashStr(wa.url).toString(36);
+  if (S.installed.indexOf(id) >= 0) { toast(wa.name + ' is already added'); return false; }
+  const rec = { id, name: wa.name, url: wa.url, color: wa.color }; S.webApps = (S.webApps || []).concat([rec]);
+  registerWebApp(rec); S.installed.push(id); if (S.apps.indexOf(id) < 0) S.apps.push(id); save(); Home.render(); Bus.emit('store');
+  toast(wa.name + ' added to Home Screen'); return true;
+}
+function removeWebApp(id) {
+  S.webApps = (S.webApps || []).filter(w => w.id !== id); S.installed = S.installed.filter(a => a !== id); S.apps = S.apps.filter(a => a !== id); S.dock = S.dock.filter(a => a !== id);
+  Object.values(S.folders).forEach(f => f.apps = f.apps.filter(a => a !== id)); delete (S.appTint || {})[id]; delete S.icons[id]; delete S.names[id];
+  save(); Home.render(); Bus.emit('store'); toast('Removed');
+}
+function addCustomWebApp(after) {
+  let url = '', name = '';
+  const body = el('<div class="wa-add"><div class="list"><input class="ce-in wa-url" inputmode="url" autocapitalize="off" placeholder="Website address (e.g. example.com)"><input class="ce-in wa-name" placeholder="App name (optional)"></div><div class="sec-f">The app opens the real website in your browser. It appears on your Home Screen with its own icon.</div></div>');
+  const h = Sheet.open({
+    title: 'Add Web App', done: 'Add', content: body, detent: 'large', host: byId('overlay'), onDone: () => {
+      url = body.querySelector('.wa-url').value.trim(); name = body.querySelector('.wa-name').value.trim();
+      if (!url) { toast('Enter a website address', '!', '', 'red'); return false; }
+      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      if (!/^https?:\/\/[^\s.]+\.[^\s]+/i.test(url)) { toast('That doesn’t look like a web address', '!', '', 'red'); return false; }
+      const dom = webDomain(url); if (!name) name = cap1(dom.split('.')[0]);
+      const col = ['#ef5f7e', '#0a84ff', '#30d158', '#ff9f0a', '#bf5af2', '#ff375f', '#64d2ff'][hashStr(dom) % 7];
+      if (installWebApp({ name, url, color: col })) after && after();
+    }
+  });
+  setTimeout(() => body.querySelector('.wa-url').focus(), 350);
+}
+function webAppsPage() {
+  const row = wa => { const id = 'wa_' + hashStr(wa.url).toString(36), got = S.installed.indexOf(id) >= 0; return '<div class="st-row"><span class="st-ic ic wa-icon" style="background:linear-gradient(180deg,' + wa.color + ',' + shade(wa.color, -22) + ')">' + webChip(wa.name, wa.url, wa.color) + '</span><button class="st-tx" data-act="' + (got ? 'open:' + id : 'wget:' + wa.url) + '"><b>' + esc(wa.name) + '</b><small>' + esc(webDomain(wa.url)) + '</small></button>' + (got ? '<button class="get" data-act="open:' + id + '">Open</button>' : '<button class="get" data-act="wget:' + wa.url + '">Add</button>') + '</div>'; };
+  return {
+    title: 'Web Apps',
+    render(pg) {
+      const cats = {}; WEBAPP_SUGGEST.forEach(w => (cats[w.cat] = cats[w.cat] || []).push(w));
+      const mine = (S.webApps || []).filter(w => WEBAPP_SUGGEST.every(s => 'wa_' + hashStr(s.url).toString(36) !== w.id));
+pg.c.innerHTML = '<div class="wa-hero"><b>' + WEBAPP_SUGGEST.length + '+ real apps</b><span>Add any website and it becomes an app on your Home Screen that opens the real thing.</span></div>' +
+        UI.search('Search ' + WEBAPP_SUGGEST.length + ' web apps') +
+        '<div class="wa-results">' +
+        UI.sec(null, [UI.row({ title: 'Add Any Website…', tint: true, act: 'addcustom', icon: '<svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', bg: 'var(--tint)' })]) +
+        (mine.length ? UI.sec('Your Web Apps', mine.map(row)) : '') +
+        Object.keys(cats).map(c => '<div class="wa-cat">' + UI.sec(c, cats[c].map(row)) + '</div>').join('') +
+        '<div class="sec-f" style="padding-bottom:30px">Web apps open the real website in your browser. Some sites work best when you’re signed in.</div></div>';
+      var si = pg.c.querySelector('.srch input'); if (si) si.addEventListener('input', function () { var qq = si.value.toLowerCase().trim(); pg.c.querySelectorAll('.wa-cat').forEach(function (cat) { var any = false; cat.querySelectorAll('.st-row').forEach(function (r) { var m = r.textContent.toLowerCase().indexOf(qq) >= 0; r.style.display = m ? '' : 'none'; if (m) any = true; }); cat.style.display = any ? '' : 'none'; }); });
+    },
+    act(a) {
+      if (a === 'addcustom') { addCustomWebApp(() => this.nav.refresh(this)); return; }
+      if (a.indexOf('wget:') === 0) { const url = a.slice(5), s = WEBAPP_SUGGEST.find(w => w.url === url); installWebApp(s || { name: cap1(webDomain(url).split('.')[0]), url, color: '#0a84ff' }); this.nav.refresh(this); return; }
+      if (a.indexOf('open:') === 0) { const wa = webApp(a.slice(5)); if (wa) openWebApp(wa); return; }
+      storeAct.call(this, a);
+    },
+    onShow(pg) { pg.nav.refresh(pg); }
+  };
+}
+/* web apps are deletable from the Home Screen */
+(function () {
+  const _rt = Home.removeTile.bind(Home);
+  Home.removeTile = function (id) {
+    if (webApp(id)) { Alert.show({ title: 'Remove “' + appName(id) + '”?', msg: 'It comes off your Home Screen. You can add it again from AiboStore.', buttons: [{ t: 'Cancel' }, { t: 'Remove', red: true, fn: () => removeWebApp(id) }] }); return; }
+    _rt(id);
+  };
+})();
+/* context menu: web apps get Delete, and the long-press "App Colour"/"Change Icon" still work */
+(function () { const _store = window.storeApp; })();
+/* real site logos on the Home Screen (favicon), lettered fallback offline */
+(function () { const _ih = iconHTML; iconHTML = function (id) { const wa = webApp(id); if (wa && !(S.icons && S.icons[id])) return '<div class="ic wa-icon" style="background:linear-gradient(180deg,' + wa.color + ',' + shade(wa.color, -24) + ')">' + webChip(wa.name, wa.url, wa.color) + '</div>'; return _ih(id); }; })();
+/* register saved web apps at startup */
+(S.webApps || []).forEach(registerWebApp);
+
+/* ==== 28_install.js ==== */
+/* ===================== install on the phone (PWA / offline) ===================== */
+const PWA = { offline: false, standalone: false, iOS: false, prompt: null };
+PWA.standalone = (window.navigator.standalone === true) || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+PWA.iOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+(function () {
+  if ('serviceWorker' in navigator) {
+    try {
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        PWA.offline = true;
+        navigator.serviceWorker.addEventListener('message', e => { if (e.data === 'cached') PWA.offline = true; });
+        if (!S.installHinted && !PWA.standalone && SYS_READY) { /* set after setup */ }
+      }).catch(() => {});
+      if (navigator.serviceWorker.controller) PWA.offline = true;
+    } catch (e) {}
+  }
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); PWA.prompt = e; });
+})();
+const SHARE_ICON = '<svg viewBox="0 0 24 24" width="22"><path d="M12 3v12M8 7l4-4 4 4M6 11H4v9h16v-9h-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+SetPages.install = () => ({
+  title: 'Install on This Phone', render(pg) {
+    if (PWA.standalone) {
+      pg.c.innerHTML = '<div class="inst-hero"><div class="inst-badge">' + iconHTML('settings').replace('settings', '') + '<img src="touch-icon.png" alt=""></div><b>AiboOS is installed</b><span>It’s running from your Home Screen' + (PWA.offline ? ', and it works offline.' : '.') + '</span></div>' +
+        UI.sec('Status', [UI.row({ title: 'Home Screen App', value: '<span class="tint">' + IC.check + '</span>', tag: 'div' }), UI.row({ title: 'Works Offline', value: PWA.offline ? '<span class="tint">' + IC.check + '</span>' : 'Caching…', tag: 'div' })]);
+      return;
+    }
+    const steps = PWA.iOS
+      ? [['Open this page in Safari', 'If you’re in the Claude app, tap the share or “open in browser” option so AiboOS opens in Safari.'], ['Tap the Share button', 'It’s the square with an arrow at the bottom of Safari.'], ['Choose “Add to Home Screen”', 'Scroll down the share sheet to find it.'], ['Tap “Add”', 'AiboOS appears on your Home Screen with the aibo icon.']]
+      : [['Open the menu', 'In your browser’s menu, look for “Install app” or “Add to Home screen”.'], ['Install AiboOS', 'Confirm, and it’s added to your phone.']];
+    pg.c.innerHTML = '<div class="inst-hero"><div class="inst-badge"><img src="touch-icon.png" alt=""></div><b>Download AiboOS to your phone</b><span>Add it to your Home Screen and it installs as its own app — full screen, with its own icon, and it keeps working with no internet.</span></div>' +
+      (PWA.prompt ? '<button class="btn press" data-act="install" style="margin-bottom:22px">Install AiboOS</button>' : '') +
+      '<div class="inst-share">' + SHARE_ICON + '<span>Share → Add to Home Screen</span></div>' +
+      UI.sec('How to install', steps.map((s, i) => UI.row({ title: s[0], sub: s[1], icon: '<b>' + (i + 1) + '</b>', bg: 'var(--tint)', tag: 'div', cls: 'inst-step' }))) +
+      UI.sec(null, [UI.row({ title: 'Works Offline', sub: PWA.offline ? 'Already downloaded to this device.' : 'Downloads automatically once added.', value: PWA.offline ? '<span class="tint">' + IC.check + '</span>' : '', tag: 'div' })]);
+  },
+  act(a) { if (a === 'install' && PWA.prompt) { PWA.prompt.prompt(); PWA.prompt = null; } },
+  onShow(pg) { pg.nav.refresh(pg); }
+});
+SET_INDEX.push(['Install on This Phone', 'install'], ['Add to Home Screen', 'install'], ['Offline', 'install'], ['Download', 'install']);
+/* a one-time nudge after first setup, if not already installed */
+Bus.on('unlock', () => {
+  if (S.installHinted || PWA.standalone || !PWA.iOS) return;
+  S.installHinted = true; save();
+  setTimeout(() => { if (Lock.locked || CUR_APP) return; Alert.show({ title: 'Install AiboOS?', msg: 'Add AiboOS to your Home Screen and it runs as its own full‑screen app, even offline. Open Settings › General › Install on This Phone for the steps.', buttons: [{ t: 'Not Now' }, { t: 'Show Me', bold: true, fn: () => { openApp('settings'); Bus.emit('settings:go', 'install'); } }] }); }, 1400);
+});
+
+</script>
+</body>
+</html>,'%','&','-','+','(',')','/'],['ABC','*','"',"'",':',';','!','?','⌫'],[',','space','.','return']]:
+      [['q','w','e','r','t','y','u','i','o','p'],['a','s','d','f','g','h','j','k','l'],['⇧','z','x','c','v','b','n','m','⌫'],['?123',',','space','.','return']];
+    this.root.innerHTML=rows.map(row=>'<div class="aibo-keyboard-row">'+row.map(key=>{
+      const label=key==='space'?'space':key==='return'?'return':key;
+      const cls=(key==='space'?' space':key==='return'?' enter':['⇧','⌫','?123','ABC'].includes(key)?' wide':'');
+      const display=key.length===1&&!this.symbols&&this.shift?key.toUpperCase():label;
+      return '<button type="button" class="'+cls+'" data-key="'+esc(key)+'" aria-label="'+esc(label)+'">'+esc(display)+'</button>';
+    }).join('')+'</div>').join('');
+  },
+  press(key){
+    const input=this.target;
+    if(!input || !input.isConnected){this.hide();return;}
+    if(key==='?123'){this.symbols=true;this.draw();return;}
+    if(key==='ABC'){this.symbols=false;this.draw();return;}
+    if(key==='⇧'){this.shift=!this.shift;this.draw();return;}
+    if(key==='return'){
+      const sent=input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));
+      if(input.tagName==='TEXTAREA'&&sent)this.insert('\n');
+      else {this.hide();input.blur();}
+      return;
+    }
+    if(key==='⌫'){this.insert('',true);return;}
+    const v=key==='space'?' ':(!this.symbols&&this.shift?key.toUpperCase():key);
+    this.insert(v,false);
+    if(this.shift&&!this.symbols){this.shift=false;this.draw();}
+  },
+  insert(text,backspace=false){
+    const t=this.target;if(!t)return;
+    const value=String(t.value||'');
+    let start=typeof t.selectionStart==='number'?t.selectionStart:value.length;
+    let end=typeof t.selectionEnd==='number'?t.selectionEnd:value.length;
+    if(backspace&&start===end)start=Math.max(0,start-1);
+    if(typeof t.maxLength==='number'&&t.maxLength>=0 &&
+       value.length-(end-start)+text.length>t.maxLength)return;
+    const revised=value.slice(0,start)+text+value.slice(end);
+    t.value=revised;
+    try{t.setSelectionRange(start+text.length,start+text.length);}catch(e){}
+    t.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+};
+
+async function boot() {
+  layoutScreen(); applyTheme(); AiboKeyboard.init();
   Island.init(); Lock.init(); Home.init(); CC.init(); Aibo.init(); bindTopEdge(); bindHardware();
   renderStatus();
   const perf = measurePerf(650);
