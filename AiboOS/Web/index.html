@@ -3699,6 +3699,68 @@ function contactEdit(id, done, deleted) {
 }
 defineApp('contacts', { launch(w) { w.nav = new Nav(w.body, contactsPage()); Bus.on('contacts:show', id => { w.nav.popTo(0); w.nav.push(contactPage(id), false); }); } });
 
+
+/* AiboID is a local 7-digit address. Nearby identities are not verified. */
+const AiboPeers = {list:[]}, AiboCalls = {to:null,state:'idle',incoming:null};
+function aiboProfileName(){return String(S.aiboName||S.name||'Aibo User').trim().slice(0,48)||'Aibo User';}
+function aiboPeerProfile(id){return (S.remoteProfiles||{})[id]||null;}
+function aiboPeerName(id){
+  const contact=contactByAibo(id), profile=aiboPeerProfile(id);
+  return contact?contactName(contact):(profile&&profile.name?profile.name:fmtAibo(id));
+}
+function aiboPeerAvatar(id,size){
+  const c=contactByAibo(id),p=aiboPeerProfile(id);
+  return avatarHTML(c||{first:(p&&p.name)||fmtAibo(id),photo:p&&p.photo||''},size);
+}
+function aiboPhotoFromBlob(blob){
+  return loadImg(blobURL(blob)).then(img=>{
+    const c=document.createElement('canvas');c.width=c.height=64;
+    const ctx=c.getContext('2d'),side=Math.min(img.naturalWidth,img.naturalHeight);
+    ctx.drawImage(img,(img.naturalWidth-side)/2,(img.naturalHeight-side)/2,side,side,0,0,64,64);
+    return c.toDataURL('image/jpeg',.65);
+  });
+}
+function aiboProfileEdit(after){
+  let photo=S.aiboPhoto||'';
+  const body=el('<div class="ce"><div class="ce-av"><div class="aibo-pfp"></div><button class="tint" data-profile="photo">Add / Change Photo</button><button class="as-sm" data-profile="remove">No Photo</button></div><div class="list"><input class="ce-in aibo-name" maxlength="48" placeholder="Your display name" value="'+esc(S.aiboName||'')+'"></div><p class="as-caption">People you message can see this name, your optional profile picture, and your 7-digit AiboID. You can change them later.</p></div>');
+  const refresh=()=>body.querySelector('.aibo-pfp').innerHTML=avatarHTML({first:body.querySelector('.aibo-name').value.trim()||aiboProfileName(),photo},88);
+  refresh();
+  on(body,'click','[data-profile]',(ev,button)=>{
+    if(button.dataset.profile==='remove'){photo='';refresh();return;}
+    PhotoPicker.pick(1).then(files=>files[0]&&aiboPhotoFromBlob(files[0].blob).then(url=>{photo=url;refresh();})).catch(()=>toast('Could not open photo picker','!','','red'));
+  });
+  body.querySelector('.aibo-name').addEventListener('input',refresh);
+  Sheet.open({title:'My Aibo Profile',done:'Save',content:body,detent:'large',onDone:()=>{
+    const n=body.querySelector('.aibo-name').value.trim().slice(0,48);
+    if(!n){toast('Choose a name','!','','red');return false;}
+    S.aiboName=n;S.aiboPhoto=photo;save();
+    AiboNative.send('peerIdentity',{id:myAibo(),name:n,photo:photo});
+    Bus.emit('threads'); if(after)after();
+  }});
+}
+function aiboCall(id){
+  id=String(id||'').replace(/[^0-9]/g,'');
+  if(!/^[0-9]{7}$/.test(id)){toast('Enter a 7-digit AiboID','!','','red');return;}
+  if(!AiboNative.available){toast('Aibo Wi-Fi calls need the native iPhone app','!','','red');return;}
+  if(AiboCalls.to){toast('End the current call first','!','','red');return;}
+  AiboCalls.to=id;AiboCalls.state='connecting';
+  AiboNative.send('peerCall',{to:id});Bus.emit('aibo:peers');
+  toast('Looking for '+aiboPeerName(id)+' nearby…');
+}
+function aiboCallsPage(){
+  return {title:'Aibo Wi-Fi Calls',render(pg){
+    const contacts=(S.contacts||[]).filter(c=>c.aibo),near=AiboPeers.list,
+      unique={};contacts.forEach(c=>unique[c.aibo]=true);
+    const connected=near.filter(p=>p.connected);
+    const list=contacts.map(c=>({id:c.aibo,name:contactName(c),online:connected.some(p=>p.id===c.aibo)}))
+      .concat(near.filter(p=>!unique[p.id]).map(p=>({id:p.id,name:aiboPeerName(p.id),online:p.connected})));
+    pg.c.innerHTML='<div class="as-banner"><h3>Aibo Wi-Fi Calling</h3><p>Call by AiboID over nearby Wi-Fi. Both phones need the AiboOS test app open and local network access. No phone minutes or SIM required.</p></div>'+
+      (AiboCalls.to?UI.sec('Current Call',[UI.row({title:aiboPeerName(AiboCalls.to),sub:AiboCalls.state+' · '+fmtAibo(AiboCalls.to),tag:'div'}),UI.row({title:'Hang Up',red:true,act:'hangup'})]):'')+
+      UI.sec('Nearby & Contacts',list.length?list.map(c=>UI.row({title:c.name,sub:fmtAibo(c.id)+(c.online?' · Connected nearby':' · Not connected'),chev:1,act:'call:'+c.id})):[UI.row({title:'No nearby AiboOS users yet',sub:'Share your AiboID with another phone running AiboOS',tag:'div'})])+
+      UI.sec(null,[UI.row({title:'Your AiboID',value:fmtAibo(myAibo()),tag:'div'}),'Local Wi-Fi and peer-to-peer Wi-Fi only. Not internet-wide, not emergency calling; identities are not verified.']);
+  },act(a){if(a==='hangup'){AiboNative.send('peerHangup');AiboCalls.to=null;AiboCalls.state='ended';this.nav.refresh(this);return;}if(a.startsWith('call:')){aiboCall(a.slice(5));this.nav.refresh(this);}},onShow(pg){pg.nav.refresh(pg)}};
+}
+
 /* ---------- Phone ---------- */
 const PH_ICON = '<svg viewBox="0 0 24 24" width="22"><path fill="currentColor" d="M6.6 3.5c-.9 0-2 .9-2 2.2 0 7 5.7 12.8 12.8 12.8 1.3 0 2.1-1.1 2.1-2 0-.4-.2-.8-.6-1l-3-1.6a1.1 1.1 0 0 0-1.3.2l-1.1 1.2a10 10 0 0 1-5.3-5.3L9.4 8.8c.3-.3.4-.9.2-1.3L8 4.5c-.2-.6-.7-1-1.4-1z"/></svg>';
 function keypadPage() {
@@ -3726,7 +3788,7 @@ defineApp('phone', {
   launch(w) {
     const st = '<svg viewBox="0 0 24 24" width="22"><path fill="currentColor" d="m12 3 2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg>', cl = SYMS.clock.replace('viewBox="0 0 20 20"', 'viewBox="0 0 20 20" width="22"'), pe = '<svg viewBox="0 0 24 24" width="22"><circle cx="12" cy="8" r="4" fill="currentColor"/><path d="M4 20c1-4 4.2-6 8-6s7 2 8 6z" fill="currentColor"/></svg>', kp = '<svg viewBox="0 0 24 24" width="22"><g fill="currentColor">' + [6, 12, 18].map(y => [6, 12, 18].map(x => '<circle cx="' + x + '" cy="' + (y - 1) + '" r="2"/>').join('')).join('') + '<circle cx="12" cy="22" r="2"/></g></svg>';
     w.tabs = TabApp(w, [{ label: 'Favourites', icon: st, page: () => ({ title: 'Favourites', render(pg) { const f = (S.contacts || []).filter(c => c.phone).slice(0, 8); pg.c.innerHTML = f.length ? UI.sec(null, f.map(c => UI.row({ title: contactName(c), sub: 'mobile', act: c.phone, value: '<span class="tint">' + PH_ICON + '</span>' }))) : UI.empty(st, 'No Favourites', 'Contacts with a phone number show here.'); }, act(a) { const c = findContact(a); placeCall(a, c ? contactName(c) : ''); }, onShow(pg) { pg.nav.refresh(pg); } }) },
-    { label: 'Recents', icon: cl, page: recentsPage }, { label: 'Contacts', icon: pe, page: contactsPage }, { label: 'Keypad', icon: kp, page: keypadPage }], { start: 3 });
+    { label: 'Recents', icon: cl, page: recentsPage }, { label: 'Contacts', icon: pe, page: contactsPage }, { label: 'Keypad', icon: kp, page: keypadPage }, { label: 'Aibo', icon: PH_ICON, page: aiboCallsPage }], { start: 3 });
   }
 });
 
@@ -3736,6 +3798,7 @@ function myAibo() { if (!S.aiboId) { S.aiboId = String(Math.floor(1000000 + Math
 function convId(a, b) { return [a, b].sort().join('-'); }
 function forEachDoc(snap, fn) { if (!snap) return; const arr = snap.docs ? snap.docs : (Array.isArray(snap) ? snap : null); const one = d => fn({ data: (typeof d.data === 'function' ? d.data() : (d.data || d)), id: d.id }); if (arr) arr.forEach(one); else if (typeof snap.forEach === 'function') snap.forEach(one); }
 function initDB() {
+  if (AiboNative.available) { DB_STATE = 'nearby'; AiboNative.send('peerIdentity',{id:myAibo(),name:aiboProfileName(),photo:S.aiboPhoto||''}); Bus.emit('threads'); return; }
   if (!hasClaude()) { DB_STATE = 'offline'; return; }
   let done = false; const t = setTimeout(() => { if (!done) { DB_STATE = 'offline'; Bus.emit('threads'); } }, 10000);
   try { claude.use('db').then(db => { done = true; clearTimeout(t); if (db) { AIBODB = db; DB_STATE = 'online'; onDBReady(); } else DB_STATE = 'offline'; Bus.emit('threads'); }).catch(() => { done = true; clearTimeout(t); DB_STATE = 'offline'; Bus.emit('threads'); }); } catch (e) { DB_STATE = 'offline'; }
@@ -3759,22 +3822,23 @@ function allThreads() {
   return Object.keys(map).map(k => map[k]).sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 function messageSend(to, text) {
-  const from = myAibo(), conv = convId(from, to), m = { conv, from, to, text: String(text), ts: Date.now() };
+  const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboNative.available ? 'waiting':'local' };
   localPush(conv, m); playSfx('send');
+  if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
   if (AIBODB) { try { AIBODB.doc('msgs/' + m.ts + '-' + Math.floor(Math.random() * 100000)).set(m); AIBODB.doc('threads/' + from + '/list/' + to).set({ 'with': to, last: text, ts: m.ts, dir: 'out' }); AIBODB.doc('threads/' + to + '/list/' + from).set({ 'with': from, last: text, ts: m.ts, dir: 'in' }); } catch (e) { } }
   Bus.emit('threads'); Bus.emit('chat:' + to, null);
 }
-const Msg = { open: null };
+const Msg = { open: null, profilePrompted:false };
 function threadsPage() {
   return {
     title: 'Messages', right: [{ icon: '<svg viewBox="0 0 20 20" width="18"><path d="M13.5 3.5l3 3L7 16H4v-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>', label: 'New Message', act: (b, pg) => newMessage(pg) }],
     render(pg) {
       const T = allThreads();
-      pg.c.innerHTML = UI.search('Search') + '<div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AIBODB ? 'on' : '') + '">' + (AIBODB ? 'Online' : DB_STATE === 'connecting' ? 'Connecting…' : 'This device only') + '</span></div>' +
-        (T.length ? '<div class="th-list">' + T.map(t => { const c = contactByAibo(t['with']); return '<button class="th" data-act="t:' + t['with'] + '">' + avatarHTML(c || { first: fmtAibo(t['with']) }, 46) + '<span class="th-tx"><span class="th-h"><b>' + esc(c ? contactName(c) : fmtAibo(t['with'])) + '</b><i>' + ago(t.ts || Date.now()) + '</i></span><span class="th-b">' + esc(t.last || '') + '</span></span></button>'; }).join('') + '</div>' : UI.empty('<svg viewBox="0 0 24 24" width="40"><path fill="currentColor" d="M12 4C6.9 4 3 7.3 3 11.3c0 2.3 1.3 4.4 3.4 5.7-.2 1.2-.9 2.3-1.8 3 1.8.1 3.5-.5 4.8-1.5.8.2 1.7.3 2.6.3 5.1 0 9-3.3 9-7.5S17.1 4 12 4z"/></svg>', 'No Messages', 'Share your AiboID. Anyone who enters it can message you.'));
+      pg.c.innerHTML = UI.search('Search') + '<button class="aibo-profile-row list" data-act="profile">' + avatarHTML({first:aiboProfileName(),photo:S.aiboPhoto||''},50) + '<span><b>'+esc(aiboProfileName())+'</b><small>Edit name / photo · AiboID '+fmtAibo(myAibo())+'</small></span><span>›</span></button>' + '<div class="aid-card list"><div><small>Your AiboID</small><b class="num">' + fmtAibo(myAibo()) + '</b></div><span class="aid-net ' + (AIBODB || AiboNative.available ? 'on' : '') + '">' + (AIBODB ? 'Online' : AiboNative.available ? 'Nearby Wi-Fi' : DB_STATE === 'connecting' ? 'Connecting…' : 'This device only') + '</span></div>' +
+        (T.length ? '<div class="th-list">' + T.map(t => { const c = contactByAibo(t['with']); return '<button class="th" data-act="t:' + t['with'] + '">' + aiboPeerAvatar(t['with'], 46) + '<span class="th-tx"><span class="th-h"><b>' + esc(aiboPeerName(t['with'])) + '</b><i>' + ago(t.ts || Date.now()) + '</i></span><span class="th-b">' + esc(t.last || '') + '</span></span></button>'; }).join('') + '</div>' : UI.empty('<svg viewBox="0 0 24 24" width="40"><path fill="currentColor" d="M12 4C6.9 4 3 7.3 3 11.3c0 2.3 1.3 4.4 3.4 5.7-.2 1.2-.9 2.3-1.8 3 1.8.1 3.5-.5 4.8-1.5.8.2 1.7.3 2.6.3 5.1 0 9-3.3 9-7.5S17.1 4 12 4z"/></svg>', 'No Messages', 'Share your AiboID. Anyone who enters it can message you.'));
       const inp = pg.c.querySelector('.srch input'); inp.addEventListener('input', () => { const q = inp.value.toLowerCase(); $$('.th', pg.c).forEach(r => r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'); });
     },
-    act(a) { if (a.indexOf('t:') === 0) this.nav.push(chatPage(a.slice(2))); }, onShow(pg) { pg.nav.refresh(pg); }
+    act(a) { if(a==='profile'){aiboProfileEdit(()=>this.nav.refresh(this));return;} if (a.indexOf('t:') === 0) this.nav.push(chatPage(a.slice(2))); }, onShow(pg) { pg.nav.refresh(pg); if(AiboNative.available && !S.aiboName && !Msg.profilePrompted){Msg.profilePrompted=true;setTimeout(()=>aiboProfileEdit(()=>pg.nav.refresh(pg)),450);} }
   };
 }
 function newMessage(pg) {
