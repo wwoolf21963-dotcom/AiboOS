@@ -40,6 +40,7 @@ jobs:
           print('Found browser script:',len(scripts[0]),'characters')
           PY
           node --check /tmp/aiboos-web.js
+          node --check AiboOS/Web/message-storage.js
       - name: Direct browser preview (works without GitHub Pages)
         run: |
           echo '### AiboOS 1.8 browser test' >> "$GITHUB_STEP_SUMMARY"
