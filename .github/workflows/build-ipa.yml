@@ -79,3 +79,18 @@ jobs:
           else
             gh release create aiboos-se-v1.7 AiboOS_SE_TrollStore.ipa --target "$GITHUB_SHA" --title "AiboOS 1.7 SE - Worldwide Messages beta" --notes "Native iPhone SE test IPA with online AiboID profile search and inbox support. Internet messaging requires separately deploying the internet-relay Cloudflare Worker and D1 database. Not a replacement OS. Worldwide calls are not supported." --prerelease
           fi
+
+      - name: Publish AiboOS 1.8 versioned IPA download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! grep -q '<string>1.8.0</string>' AiboOS/Info.plist; then
+            echo 'Not an AiboOS 1.8 build; skip old version tag'
+            exit 0
+          fi
+          if gh release view aiboos-se-v1.8 >/dev/null 2>&1; then
+            gh release upload aiboos-se-v1.8 AiboOS_SE_TrollStore.ipa --clobber
+          else
+            gh release create aiboos-se-v1.8 AiboOS_SE_TrollStore.ipa --target "$GITHUB_SHA" --title "AiboOS 1.8 SE - Managed Internet Messaging" --notes "AiboOS 1.8 for iPhone SE 2016. The Messages app automatically uses https://aibomesgsystem.wwoolf21963.workers.dev and shows Service Offline if the relay fails. The Cloudflare Worker and D1 database must be deployed separately for messaging to work. Unsigned TrollStore testing build; does not replace iOS and is not end-to-end encrypted." --prerelease
+          fi
