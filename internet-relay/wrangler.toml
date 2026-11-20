@@ -1,0 +1,9 @@
+name = "aiboos-internet-relay"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aiboos-relay"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
