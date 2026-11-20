@@ -7,3 +7,8 @@ workers_dev = true
 binding = "DB"
 database_name = "aiboos-relay"
 database_id = "271f0727-d23e-44ec-8a71-3550ea197a77"
+
+# Optional media delivery: create an R2 bucket with this name, then bind as MEDIA.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "aiboos-media"
