@@ -26,13 +26,16 @@ jobs:
           import re
           from pathlib import Path
           text = Path('AiboOS/Web/index.html').read_text()
-          match = re.search(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.DOTALL)
-          if not match:
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', text, re.DOTALL)
+          if not scripts:
               raise SystemExit('No AiboOS script found')
-          Path('/tmp/aiboos.js').write_text(match.group(1))
-          print('JavaScript extracted:', len(match.group(1)), 'characters')
+          import subprocess
+          for i, script in enumerate(scripts):
+              output = f'/tmp/aiboos-inline-{i}.js'
+              Path(output).write_text(script)
+              subprocess.run(['node', '--check', output], check=True)
+          print('Checked all', len(scripts), 'AiboOS inline scripts')
           PY
-          node --check /tmp/aiboos.js
       - name: Check Aibo Phone Message Vault JavaScript
         run: node --check AiboOS/Web/message-storage.js
       - name: Check Aibo Internet Relay JavaScript
