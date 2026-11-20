@@ -4040,9 +4040,10 @@ const AiboCloud = {
     this.register();
     setInterval(() => {
       if (this.endingSession || !this.endpoint || document.hidden || navigator.onLine === false) return;
-      if (this.ready) this.sync();
-      else if (!this.starting && Date.now() - (this.lastRegisterAttempt || 0) > 11000) this.register();
-    }, 3000);
+      const interval = Msg.open ? 700 : 4000; // 0.7s only while actively viewing a chat
+      if (this.ready && Date.now() - (this.lastSyncAttempt || 0) >= interval) this.sync();
+      else if (!this.ready && !this.starting && Date.now() - (this.lastRegisterAttempt || 0) > 11000) this.register();
+    }, 350);
     window.addEventListener('online', () => { if (!this.endingSession && this.endpoint) this.ready ? this.sync() : this.register(); });
     document.addEventListener('visibilitychange', () => {
       if (!this.endingSession && !document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
@@ -4156,6 +4157,7 @@ const AiboCloud = {
   async sync() {
     if(this.endingSession || !this.ready || this.syncBusy || document.hidden) return;
     this.syncBusy=true;
+    this.lastSyncAttempt = Date.now();
     try {
       const data=await this.request('/v1/sync?receiptSince='+(Number(S.cloudReceiptSince)||0));
       const incoming=Array.isArray(data.messages)?data.messages:[];
