@@ -3902,7 +3902,13 @@ const AiboCloud = {
           text:m.text.slice(0,4000),name:String(m.name||'Aibo User').slice(0,48),
           ts:Number(m.ts)||Date.now(),delivery:'received'};
         const exists = PhoneMsgStore.ready && await PhoneMsgStore.has(conv,incomingMessage);
-        if(!exists && !old.some(x=>x.from===from && x.id===m.clientId)) {
+        const cached = old.find(x=>x.from===from && x.id===m.clientId);
+        if (!exists && cached) {
+          // Retry a previously failed phone write before ACKing redelivery.
+          const recovered = PhoneMsgStore.ready && await PhoneMsgStore.persist(conv,cached);
+          if (!recovered) throw Error('Phone message not saved; delivery not acknowledged');
+        }
+        if (!exists && !cached) {
           const saved = await localPush(conv,incomingMessage);
           if (!saved) throw Error('Phone message storage full or unavailable; delivery not acknowledged');
           if(!contactByAibo(from)) {
