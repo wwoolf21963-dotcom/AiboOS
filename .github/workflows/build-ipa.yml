@@ -70,6 +70,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          if ! grep -q '<string>1.7.0</string>' AiboOS/Info.plist; then
+            echo 'Not an AiboOS 1.7 build; skip old version tag'
+            exit 0
+          fi
           if gh release view aiboos-se-v1.7 >/dev/null 2>&1; then
             gh release upload aiboos-se-v1.7 AiboOS_SE_TrollStore.ipa --clobber
           else
