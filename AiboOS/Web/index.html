@@ -4191,8 +4191,16 @@ const AiboCloud = {
     if (!this.ready) {m.delivery='pending';save();return;}
     if (m.delivery === 'delivered') return;
     try {
+      let messageBody=m.text;
+      if(m.attachment){
+        if(!m.attachment.id){
+          m.attachment.id=await AiboMedia.upload(m);
+          if(PhoneMsgStore.ready) await PhoneMsgStore.persist(m.conv,m);
+        }
+        messageBody=AiboMedia.encode(m);
+      }
       const result = await this.request('/v1/messages','POST',{
-        clientId:m.id,to:m.to,text:m.text
+        clientId:m.id,to:m.to,text:messageBody
       });
       m.delivery = result.delivered ? 'delivered' : 'queued';
       delete m.deliveryError;
@@ -4222,11 +4230,22 @@ const AiboCloud = {
         const from=String(m.sender||''),to=myAibo();
         if(!/^[0-9]{7}$/.test(from)||typeof m.text!=='string'||!Number.isSafeInteger(Number(m.serverId)))continue;
         const conv=convId(from,to), old=localMsgs(conv);
+        const decoded=AiboMedia.decode(m.text);
         const incomingMessage={id:String(m.clientId||uid()).slice(0,64),conv,from,to,
-          text:m.text.slice(0,4000),name:String(m.name||'Aibo User').slice(0,48),
+          text:decoded?decoded.text:m.text.slice(0,4000),
+          attachment:decoded?decoded.attachment:null,
+          name:String(m.name||'Aibo User').slice(0,48),
           ts:Number(m.ts)||Date.now(),delivery:'received'};
         const exists = PhoneMsgStore.ready && await PhoneMsgStore.has(conv,incomingMessage);
         const cached = old.find(x=>x.from===from && x.id===m.clientId);
+        // Save media to recipient's phone before acknowledging message delivery.
+        if(incomingMessage.attachment){
+          const stored=PhoneMsgStore.ready && await PhoneMsgStore.mediaGet(incomingMessage);
+          if(!stored){
+            const mediaBlob=await AiboMedia.download(incomingMessage.attachment);
+            await PhoneMsgStore.mediaSave(incomingMessage,mediaBlob);
+          }
+        }
         if (!exists && cached) {
           // Retry a previously failed phone write before ACKing redelivery.
           const recovered = PhoneMsgStore.ready && await PhoneMsgStore.persist(conv,cached);
@@ -4241,7 +4260,7 @@ const AiboCloud = {
               photo:typeof m.photo==='string'&&/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(m.photo)&&m.photo.length<25000?m.photo:''};
           }
           saveNow();
-          if(Msg.open!==from)notify('messages',aiboPeerName(from),m.text.slice(0,160));
+          if(Msg.open!==from)notify('messages',aiboPeerName(from),incomingMessage.text.slice(0,160));
           Bus.emit('threads');Bus.emit('chat:'+from);
         }
         // Acknowledge only after the message was kept in local history.
