@@ -6,4 +6,4 @@ workers_dev = true
 [[d1_databases]]
 binding = "DB"
 database_name = "aiboos-relay"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "271f0727-d23e-44ec-8a71-3550ea197a77"
