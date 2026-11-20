@@ -112,8 +112,8 @@ export default {
       const messages=await env.DB.prepare(
         "SELECT m.id AS serverId,m.client_id AS clientId,m.from_id AS sender,m.to_id AS recipient,"+
         "m.text,m.ts,a.name,a.photo FROM messages m JOIN accounts a ON a.id=m.from_id "+
-        "WHERE m.to_id=? AND m.id>? ORDER BY m.id LIMIT 100"
-      ).bind(me.id,cursor).all();
+        "WHERE m.to_id=? AND m.delivered_at IS NULL ORDER BY m.id LIMIT 100"
+      ).bind(me.id).all();
       const receipts=await env.DB.prepare(
         "SELECT client_id AS clientId,delivered_at AS deliveredAt FROM messages "+
         "WHERE from_id=? AND delivered_at IS NOT NULL AND delivered_at>? ORDER BY delivered_at LIMIT 100"
