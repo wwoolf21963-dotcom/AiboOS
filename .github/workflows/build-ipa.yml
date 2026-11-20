@@ -29,6 +29,8 @@ jobs:
           print('JavaScript extracted:', len(match.group(1)), 'characters')
           PY
           node --check /tmp/aiboos.js
+      - name: Check Aibo Internet Relay JavaScript
+        run: node --check internet-relay/src/index.js
       - name: Compile AiboOS for physical iPhone SE
         run: |
           set -euo pipefail
