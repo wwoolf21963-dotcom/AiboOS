@@ -1160,6 +1160,15 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
 .aibo-keyboard button.space{flex:4;font-size:14px}
 .aibo-keyboard button.enter{background:var(--tint);color:#fff;font-size:14px}
 .aibo-keyboard-visible .compose{bottom:calc(var(--bottom) + 242px)}
+
+/* AiboOS simulated critical shutdown, never an iOS system shutdown. */
+#aiboBatteryOff{position:absolute;inset:0;z-index:200;background:#000;color:#ececf4;display:none;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:20px;gap:15px;pointer-events:auto}
+#aiboBatteryOff.active{display:flex}
+#aiboBatteryOff .batt-dead-svg{width:116px;height:66px}
+#aiboBatteryOff h2{font-size:19px;font-weight:650;margin:0}
+#aiboBatteryOff p{max-width:250px;line-height:1.5;font-size:13px;color:#aaa;margin:0}
+#aiboBatteryOff button{border:1px solid #57515e;background:#242029;color:#fafafa;padding:12px 20px;border-radius:11px;font:inherit}
+#aiboBatteryOff .batt-empty-fill{fill:#ff453a}
 </style>
 </head>
 <body>
@@ -1182,6 +1191,16 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
       <div id="edgeTop" class="edge"></div>
       <div id="dim" class="layer"></div>
       <div id="boot" class="layer"></div>
+      <div id="aiboBatteryOff" aria-label="AiboOS powered off due to critical battery" role="status">
+        <svg class="batt-dead-svg" viewBox="0 0 120 65" fill="none" aria-hidden="true">
+          <rect x="7" y="8" width="99" height="49" rx="9" stroke="#b2afb9" stroke-width="4"/>
+          <path d="M110 22v21" stroke="#b2afb9" stroke-width="7" stroke-linecap="round"/>
+          <rect x="15" y="16" width="6" height="33" rx="2" class="batt-empty-fill"/>
+        </svg>
+        <h2>Battery empty</h2>
+        <p>Connect a charger to power AiboOS back on. Your iPhone and saved messages are not erased.</p>
+        <button id="aiboTryPower" type="button">Try Power</button>
+      </div>
     </div>
     <button id="hwHome" aria-label="Home button"><i></i></button>
   </div>
@@ -2132,29 +2151,77 @@ function initBattery() {
   }).catch(() => { });
 }
 /* AiboOS can display warnings, but it cannot change iOS system power settings or predict shutdown. */
+const AiboBatteryShutdown={
+  off:false,initialized:false,
+  init(){
+    if(this.initialized)return;
+    this.initialized=true;
+    byId('aiboTryPower').addEventListener('click',()=>this.tryPower());
+    byId('aiboBatteryOff').addEventListener('click',e=>{if(e.target.id==='aiboBatteryOff')this.tryPower();});
+    // Hardware-style home control acts as a power-attempt while AiboOS is off.
+    byId('hwHome').addEventListener('click',e=>{
+      if(!this.off)return;
+      e.preventDefault();e.stopImmediatePropagation();this.tryPower();
+    },true);
+  },
+  turnOff(){
+    if(this.off)return;
+    this.off=true;
+    saveNow();
+    try{AiboKeyboard.hide();}catch(e){}
+    byId('aiboBatteryOff').classList.add('active');
+    byId('aiboBatteryOff').setAttribute('aria-hidden','false');
+  },
+  tryPower(){
+    if(!this.off)return;
+    if(BATT.charging && BATT.level!=null && Math.round(BATT.level*100)>1){
+      this.restore();return;
+    }
+    const root=byId('aiboBatteryOff'),title=root.querySelector('h2');
+    title.textContent='Battery empty';
+    root.animate?.([{opacity:.5},{opacity:1}],{duration:300});
+  },
+  restore(){
+    if(!this.off)return;
+    this.off=false;
+    byId('aiboBatteryOff').classList.remove('active');
+    byId('aiboBatteryOff').setAttribute('aria-hidden','true');
+    BATT.warned5=false;
+    Lock.lock();
+    toast('Charging — AiboOS ready');
+  }
+};
+/* AiboOS warnings use the actual battery level when available.
+ * At 1% only the AiboOS interface is visually powered off, not the iPhone. */
 function checkBatteryAlerts() {
   if (!SYS_READY || !S.setupDone || BATT.level == null) return;
   const pct=Math.round(BATT.level*100);
-  if (BATT.charging) {
-    if(pct>25){BATT.warned20=false;BATT.warned10=false;}
-    else if(pct>15)BATT.warned10=false;
+  if(AiboBatteryShutdown.off){
+    if(BATT.charging && pct>1)AiboBatteryShutdown.restore();
     return;
   }
+  if(BATT.charging){
+    if(pct>25){BATT.warned20=false;BATT.warned10=false;BATT.warned5=false;}
+    return;
+  }
+  if(pct<=1){AiboBatteryShutdown.turnOff();return;}
   let threshold=null;
-  if(pct<=10 && !BATT.warned10){BATT.warned10=true;BATT.warned20=true;threshold=10;}
+  if(pct<=5 && !BATT.warned5){BATT.warned5=true;BATT.warned10=true;BATT.warned20=true;threshold=5;}
+  else if(pct<=10 && pct>5 && !BATT.warned10){BATT.warned10=true;BATT.warned20=true;threshold=10;}
   else if(pct<=20 && pct>10 && !BATT.warned20){BATT.warned20=true;threshold=20;}
   if(threshold===null)return;
   Alert.show({
-    title:threshold===10?'Low Battery — 10%':'Low Battery — 20%',
-    msg:threshold===10?
-      'Your iPhone battery is critically low and may shut down soon. Connect a charger. You can enable AiboOS Low Power Mode to reduce app activity.':
+    title:'Low Battery — '+threshold+'%',
+    msg:threshold===5?
+      'Battery is at 5%. Your iPhone may shut down soon. At 1%, AiboOS will show its dead-battery screen. Connect a charger now.':
+      threshold===10?
+      'Your iPhone battery is critically low and may shut down soon. Connect a charger. Enable AiboOS Low Power Mode to reduce app activity.':
       'Your iPhone battery is running low. Enable AiboOS Low Power Mode to reduce effects and message checks.',
     buttons:[
       {t:'Cancel'},
       {t:'Low Power Mode',bold:true,fn:()=>{
         S.lowPower=true;applyTheme();save();renderStatus();
-        Bus.emit('settings');
-        toast('AiboOS Low Power Mode enabled');
+        Bus.emit('settings');toast('AiboOS Low Power Mode enabled');
       }}
     ]
   });
@@ -6654,7 +6721,7 @@ Bus.on('unlock', () => {
 };
 
 async function boot() {
-  layoutScreen(); applyTheme(); AiboKeyboard.init();
+  layoutScreen(); applyTheme(); AiboKeyboard.init(); AiboBatteryShutdown.init();
   Island.init(); Lock.init(); Home.init(); CC.init(); Aibo.init(); bindTopEdge(); bindHardware();
   renderStatus();
   const perf = measurePerf(650);
