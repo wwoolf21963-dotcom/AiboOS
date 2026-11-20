@@ -3481,7 +3481,7 @@ const SetPages = {
     });
   } }),
   datetime: () => ({ title: 'Date & Time', render(pg) { let tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { } pg.c.innerHTML = UI.sec(null, [UI.row({ title: '24-Hour Time', toggle: use24(), act: 't24' })]) + UI.sec(null, [UI.row({ title: 'Time Zone', value: esc(tz || 'Local'), tag: 'div' }), UI.row({ title: 'Now', value: fmtDate() + ', ' + fmtTime(new Date(), true), tag: 'div' })], 'Time comes from your device.'); }, act: setAct }),
-  reset: () => ({ title: 'Transfer or Reset', render(pg) { pg.c.innerHTML = UI.sec(null, [UI.row({ title: 'Reset Home Screen Layout', act: 'resetlayout' })]) + UI.sec(null, [UI.row({ title: 'Erase All Content and Settings', red: true, act: 'erase' })], 'Erasing removes your passcode, notes, photos, music, sounds and settings from this device, then starts setup again. Your AiboID is kept only if you write it down first.'); }, act: setAct }),
+  reset: () => ({ title: 'Transfer or Reset', render(pg) { pg.c.innerHTML = UI.sec(null, [UI.row({ title: 'Reset Home Screen Layout', act: 'resetlayout' })]) + UI.sec(null, [UI.row({ title: 'Erase All Content and Settings', red: true, act: 'erase' })], 'Erasing removes AiboOS data on this device and requests deletion of your online AiboID and queued messages first. If the server is offline, you will be warned. This does not erase iOS itself.'); }, act: setAct }),
   access: () => ({ title: 'Accessibility', render(pg) { pg.c.innerHTML = UI.sec('Motion', [UI.row({ title: 'Reduce Motion', toggle: S.reduceMotion, act: 't:reduceMotion' })], 'Animations become short fades with no bounce.') + UI.sec('Display', [UI.row({ title: 'Reduce Transparency', toggle: S.reduceTransparency, act: 't:reduceTransparency' }), UI.row({ title: 'Bold Text', toggle: S.boldText, act: 't:boldText' })]) + UI.sec('Larger Text', ['<div class="row sl-row"><span class="sl-a">A</span><input type="range" class="rng" min="-2" max="6" step="1" value="' + (S.textSize || 0) + '" data-rng="ts"><span class="sl-a big">A</span></div>'], 'Changes the size of text in lists and apps.'); const r = pg.c.querySelector('[data-rng="ts"]'); r.addEventListener('input', () => { S.textSize = +r.value; applyTheme(); save(); }); }, act: setAct }),
   aibo: () => ({ title: 'Aibo', render(pg) {
     const how = Aibo.dict ? 'Aibo hears you through Claude’s dictation. While it listens, an orange dot shows in the status bar.' : Aibo.webRec ? 'Aibo uses this browser’s speech recognition. While it listens, an orange dot shows in the status bar.' : 'Voice isn’t available where AiboOS is running now (Claude’s voice features work in Chrome and the Claude desktop app). Tap the Dynamic Island and type to Aibo instead.';
@@ -3583,7 +3583,7 @@ function setAct(a, b, ev) {
   if (k === 'wallphotos' || k === 'wallfile') { const set = blob => dbPut('kv', { id: 'wall', blob }).then(() => { S.wallPhoto = true; save(); return buildWallpaper(); }).then(() => { pg.nav.refresh(pg); toast('Wallpaper set'); }); if (k === 'wallfile') pickFile('image/*').then(f => f[0] && set(f[0])); else PhotoPicker.pick(1).then(l => l[0] && set(l[0].blob)); return; }
   if (k === 'icon') { EditApp.open(v); return; }
   if (k === 'resetlayout') { Alert.show({ title: 'Reset Home Screen?', msg: 'Apps go back to their original places. Folders are removed.', buttons: [{ t: 'Cancel' }, { t: 'Reset', red: true, fn: () => { S.apps = APP_ORDER.filter(a => S.installed.indexOf(a) >= 0).concat(S.installed.filter(a => APP_ORDER.indexOf(a) < 0 && DEFAULTS.dock.indexOf(a) < 0)); S.dock = DEFAULTS.dock.slice(); S.folders = {}; save(); Home.render(); toast('Home Screen reset'); } }] }); return; }
-  if (k === 'erase') { Alert.show({ title: 'Erase AiboOS?', msg: 'This deletes everything on this device and starts setup again.', buttons: [{ t: 'Cancel' }, { t: 'Erase', red: true, fn: eraseAll }] }); return; }
+  if (k === 'erase') { Alert.show({ title: 'Erase AiboOS?', msg: 'This erases local AiboOS data and asks the internet relay to delete your AiboID, account and queued messages. If the server is offline, you will be warned before erasing this phone only.', buttons: [{ t: 'Cancel' }, { t: 'Erase', red: true, fn: eraseAll }] }); return; }
   if (k === 'replay') { S.setupDone = false; saveNow(); location.reload(); return; }
   if (k === 'wake') { Aibo.toggleWake(); setTimeout(() => pg.nav.refresh(pg), 50); return; }
   if (k === 'talk') { Aibo.open('tap'); return; }
@@ -3594,8 +3594,40 @@ function setAct(a, b, ev) {
   if (k === 'passchange') { PassFlow.open(code => { S.passcode = code; save(); pg.nav.refresh(pg); toast('Passcode set'); }); return; }
 }
 function themeCards() { return '<div class="th-cards">' + Object.keys(THEMES).map(k => { const t = THEMES[k]; return '<button class="th-card' + (S.themeName === k ? ' on' : '') + '" data-th="' + k + '"><span class="th-sw" style="background:' + (t.theme === 'light' ? '#fde4ee' : '#141016') + '"><i style="background:' + t.tint + '"></i><i style="background:' + t.tint + ';opacity:.55"></i><i style="background:' + t.tint + ';opacity:.3"></i>' + (k === 'aibo' || k === 'pup' ? '<b class="th-eyes"><em></em><em></em></b>' : '') + '</span>' + t.name + '</button>'; }).join('') + '</div>'; }
-let ERASING = false;
-function eraseAll() {
+let ERASING = false, ERASE_PENDING = false;
+function eraseAll(automatic = false) {
+  if (ERASING || ERASE_PENDING) return;
+  ERASE_PENDING = true;
+  // Keep the private device key available until the server confirms deletion.
+  AiboCloud.endingSession = true;
+  const finish = () => eraseLocalAibo();
+  const deletion = AiboCloud.request('/v1/account', 'DELETE').then(result => {
+    if (!result || result.deleted !== true) throw Error('Server did not confirm account deletion');
+  });
+  // A passcode-triggered safety wipe must not be blocked indefinitely offline.
+  const attempt = automatic ? Promise.race([
+    deletion, new Promise((_, reject) => setTimeout(() => reject(Error('Server unavailable')), 4000))
+  ]) : deletion;
+  attempt.then(finish).catch(error => {
+    if (automatic) {
+      console.warn('Automatic erase: remote ID deletion was not confirmed', error);
+      finish();
+      return;
+    }
+    ERASE_PENDING = false;
+    AiboCloud.endingSession = false;
+    Alert.show({
+      title: 'Service Offline — ID Not Removed',
+      msg: 'The server did not confirm deletion of your AiboID. Try again later to remove both the phone data and online account, or erase only this phone now. An online AiboID may remain.',
+      buttons: [
+        { t: 'Cancel' },
+        { t: 'Erase Phone Only', red: true, fn: finish }
+      ]
+    });
+  });
+}
+function eraseLocalAibo() {
+  if (ERASING) return;
   ERASING = true; clearTimeout(saveT);
   const b = byId('boot'); b.style.display = 'flex'; b.style.opacity = 1; b.innerHTML = '<img class="boot-logo" src="logo.svg" alt="aibo"><div class="boot-msg">Erasing…</div>';
   try { Object.keys(localStorage).forEach(k => { if (k.indexOf('aiboos') === 0 || k === '_t') localStorage.removeItem(k); }); } catch (e) { }
@@ -3725,15 +3757,18 @@ const AiboCloud = {
     if (S.aiboRelayURL !== AIBO_RELAY_URL) {
       S.aiboRelayURL = AIBO_RELAY_URL; save();
     }
+    // Send this installation's ID and display profile to the relay immediately.
+    // Registration will retry after reconnection without generating another ID.
+    myAibo();
     this.register();
     setInterval(() => {
-      if (!this.endpoint || document.hidden || navigator.onLine === false) return;
+      if (this.endingSession || !this.endpoint || document.hidden || navigator.onLine === false) return;
       if (this.ready) this.sync();
       else if (!this.starting) this.register();
     }, 12000);
-    window.addEventListener('online', () => { if (this.endpoint) this.ready ? this.sync() : this.register(); });
+    window.addEventListener('online', () => { if (!this.endingSession && this.endpoint) this.ready ? this.sync() : this.register(); });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
+      if (!this.endingSession && !document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
     });
   },
   secret() {
@@ -3776,7 +3811,7 @@ const AiboCloud = {
     } finally {clearTimeout(timeout);}
   },
   async register() {
-    if (!this.endpoint || this.starting) return;
+    if (!this.endpoint || this.starting || this.endingSession) return;
     this.starting = true;
     Bus.emit('cloud:status');
     try {
@@ -3784,6 +3819,7 @@ const AiboCloud = {
       const data = await this.request('/v1/register','POST',{
         id:original, name:aiboProfileName(), photo:S.aiboPhoto||''
       });
+      if(this.endingSession) return;
       if(!/^[0-9]{7}$/.test(data.id || '')) throw Error('Relay returned an invalid Aibo ID');
       if(original !== data.id) {
         S.aiboId = data.id;
@@ -3815,7 +3851,7 @@ const AiboCloud = {
     return result;
   },
   async send(m) {
-    if(!this.endpoint || !m || !m.id || !m.to) return;
+    if(this.endingSession || !this.endpoint || !m || !m.id || !m.to) return;
     if (!this.ready) {m.delivery='pending';save();return;}
     if (m.delivery === 'delivered') return;
     try {
@@ -3838,7 +3874,7 @@ const AiboCloud = {
     }
   },
   async sync() {
-    if(!this.ready || this.syncBusy || document.hidden) return;
+    if(this.endingSession || !this.ready || this.syncBusy || document.hidden) return;
     this.syncBusy=true;
     try {
       const data=await this.request('/v1/sync?receiptSince='+(Number(S.cloudReceiptSince)||0));
@@ -3985,7 +4021,17 @@ defineApp('phone', {
 
 /* ---------- Messages (AiboID: a 7-digit number anyone can message) ---------- */
 let AIBODB = null, DB_STATE = 'connecting', THREADS = {}, THREADS_READY = false;
-function myAibo() { if (!S.aiboId) { S.aiboId = String(Math.floor(1000000 + Math.random() * 9000000)); save(); } return S.aiboId; }
+function myAibo() {
+  // Create a persistent per-install AiboID before the first server request.
+  // Existing valid IDs remain untouched on updates and reconnects.
+  if (!/^[1-9][0-9]{6}$/.test(String(S.aiboId || ''))) {
+    const value = new Uint32Array(1);
+    crypto.getRandomValues(value);
+    S.aiboId = String(1000000 + (value[0] % 9000000));
+    saveNow();
+  }
+  return S.aiboId;
+}
 function convId(a, b) { return [a, b].sort().join('-'); }
 function forEachDoc(snap, fn) { if (!snap) return; const arr = snap.docs ? snap.docs : (Array.isArray(snap) ? snap : null); const one = d => fn({ data: (typeof d.data === 'function' ? d.data() : (d.data || d)), id: d.id }); if (arr) arr.forEach(one); else if (typeof snap.forEach === 'function') snap.forEach(one); }
 function initDB() {
@@ -5524,7 +5570,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && !Lo
     if (right) { S.failCount = 0; save(); }
     else {
       S.failCount = (S.failCount || 0) + 1; save();
-      if (S.eraseOnFail && S.failCount >= 10) { eraseAll(); return; }
+      if (S.eraseOnFail && S.failCount >= 10) { eraseAll(true); return; }
       if (S.eraseOnFail && S.failCount >= 7) setTimeout(() => { this.pass.querySelector('.lp-t').textContent = (10 - S.failCount) + ' attempts before erase'; }, 300);
     }
     _check();
