@@ -1167,7 +1167,7 @@ body.lowfx .pg.grouped::before,body.lowfx .pg.plain::before{opacity:.12}
 "use strict";
 /* ==== 01_core.js ==== */
 /* ===================== AiboOS 1.0 — core ===================== */
-const VERSION = '1.5';
+const VERSION = '1.6';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const byId = id => document.getElementById(id);
@@ -1195,7 +1195,7 @@ const DEFAULTS = {
   installed: ['phone', 'messages', 'aibobrowser'].concat(APP_ORDER), names: {}, icons: {}, badges: {}, searchPill: true,
   notifs: [], notifAllow: {}, recents: [],
   notes: [], reminders: [], events: [], contacts: [], calls: [], alarms: [], worldClocks: ['Europe/London', 'America/New_York', 'Asia/Tokyo'],
-  aiboId: '', localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
+  aiboId: '', aiboName: '', aiboPhoto: '', remoteProfiles: {}, faceUnlock: false, localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
   fitness: [], savedImgs: [], tf: { best: 0 }, browserHome: [],
   font: 'system', iconShape: 'squircle', iconSize: 'medium', cols: 4, labels: true, wallDim: 0, lockColor: '', animSpeed: 'normal', battPct: false, termHist: [],
   autoLock: 120, lockOnExit: false, eraseOnFail: false, lockedApps: [], failCount: 0, storeRegion: 'GB', appColours: true, dockMax: 4, cardRadius: 24, iconStyle: 'default', islandIdle: 'pill', webApps: []
@@ -1676,6 +1676,72 @@ window.addEventListener('aibo-native', ev => {
     Aibo.mode = null;
     if(Aibo.active) Aibo.say(e.message || 'Voice unavailable','sad');
     toast(e.message || 'Voice unavailable','!','','red'); Aibo.ui();
+  } else if (e.type === 'batteryStatus') {
+    BATT.level = Number.isFinite(+e.level) && +e.level >= 0 ? Math.max(0,Math.min(1,+e.level)) : null;
+    BATT.charging = !!e.charging;
+    renderStatus(); Bus.emit('battery');
+  } else if (e.type === 'peerList') {
+    AiboPeers.list = Array.isArray(e.peers) ? e.peers : [];
+    Bus.emit('threads'); Bus.emit('aibo:peers');
+  } else if (e.type === 'peerProfile') {
+    if(/^\\d{7}$/.test(e.id || '')) {
+      S.remoteProfiles = S.remoteProfiles || {};
+      S.remoteProfiles[e.id] = {
+        name: String(e.name || 'Aibo User').slice(0,48),
+        photo: /^data:image\\/(jpeg|png|webp);base64,/.test(e.photo || '') && (e.photo || '').length < 25000 ? e.photo : ''
+      };
+      save(); Bus.emit('threads'); Bus.emit('chat:'+e.id);
+    }
+  } else if (e.type === 'peerMessage') {
+    if(/^\\d{7}$/.test(e.from || '') && typeof e.text === 'string') {
+      const conv = convId(myAibo(),e.from), arr = localMsgs(conv);
+      if(!arr.some(m => m.id === e.id && m.from === e.from)) {
+        localPush(conv,{id:e.id || uid(),conv,from:e.from,to:myAibo(),
+          text:e.text.slice(0,4000),name:String(e.name||'Aibo User').slice(0,48),
+          ts:Number(e.ts)||Date.now(),delivery:'received'});
+        if(e.name && !contactByAibo(e.from)) {
+          S.remoteProfiles = S.remoteProfiles || {};
+          S.remoteProfiles[e.from] = Object.assign({},S.remoteProfiles[e.from]||{},
+             {name:String(e.name).slice(0,48)});save();
+        }
+        if(Msg.open !== e.from) notify('messages',aiboPeerName(e.from),e.text);
+      }
+      Bus.emit('threads'); Bus.emit('chat:'+e.from);
+    }
+  } else if (e.type === 'messageStatus') {
+    for(const conv of Object.keys(S.localMsgs || {})) {
+      for(const m of S.localMsgs[conv]) {
+        if(m.id === e.id && m.from === myAibo()) {
+          m.delivery = e.status; save(); Bus.emit('chat:'+m.to);
+        }
+      }
+    }
+    Bus.emit('threads');
+  } else if (e.type === 'callIncoming') {
+    AiboCalls.incoming = e.from;
+    Alert.show({title:'Incoming Aibo Wi-Fi Call',
+      msg:String(e.name||aiboPeerName(e.from))+' · AiboID '+fmtAibo(e.from),
+      buttons:[{t:'Decline',red:true,fn:()=>{AiboNative.send('peerDecline',{from:e.from});AiboCalls.incoming=null;}},
+               {t:'Answer',bold:true,fn:()=>{AiboNative.send('peerAccept',{from:e.from});AiboCalls.to=e.from;AiboCalls.incoming=null;openApp('phone');Bus.emit('aibo:peers');}}]});
+  } else if (e.type === 'callState') {
+    AiboCalls.to = e.state === 'active' || e.state === 'connecting' || e.state === 'ringing' ? e.to : null;
+    AiboCalls.state = e.state;
+    Bus.emit('aibo:peers');
+    if(e.state === 'declined') toast('Call declined');
+    if(e.state === 'ended') toast('Aibo Wi-Fi call ended');
+    if(e.state === 'active') {
+      Alert.show({title:'Aibo Wi-Fi Call',msg:'Connected to '+aiboPeerName(e.to)+'. Microphone audio is live while both apps stay open.',
+        buttons:[{t:'Keep Talking'},{t:'Hang Up',red:true,fn:()=>AiboNative.send('peerHangup')}]});
+    }
+    if(e.state === 'error') toast(e.reason||'Wi-Fi call unavailable','!','','red');
+  } else if (e.type === 'faceStatus') {
+    S.faceEnrolled = !!e.enrolled;
+    if(!e.enrolled && S.faceUnlock) {S.faceUnlock=false;save();}
+  } else if (e.type === 'faceCheckResult') {
+    if(e.mode === 'enroll' && e.ok) {S.faceUnlock=true;S.faceEnrolled=true;save();toast('Face Check enabled');}
+    else if(e.mode === 'verify' && e.ok && Lock.locked) Lock.unlock();
+    else if(e.message && !/cancelled/i.test(e.message)) toast(e.message,'!','','red');
+    Bus.emit('settings');
   } else if (e.type === 'camera' && e.error) toast(e.error,'!','','red');
 });
 /* ==== 07_island.js ==== */
@@ -1699,6 +1765,7 @@ function statusStyle(dark) { byId('status').classList.toggle('dark', !!dark); by
 window.addEventListener('online', renderStatus); window.addEventListener('offline', renderStatus);
 try { navigator.connection && navigator.connection.addEventListener && navigator.connection.addEventListener('change', renderStatus); } catch (e) { }
 function initBattery() {
+  if (AiboNative.available) { AiboNative.send('batteryRequest'); return; }
   if (!navigator.getBattery) return;
   navigator.getBattery().then(b => {
     let first = true;
