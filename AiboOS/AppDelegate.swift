@@ -20,6 +20,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, WKNavigationDelegat
     private var currentVoiceID: String?
     private var torchEnabled = false
     private var lastRecognitionText = ""
+    private lazy var nearby: AiboNearby = {
+        let p = AiboNearby()
+        p.event = { [weak self] type, fields in self?.emit(type, fields) }
+        return p
+    }()
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
@@ -60,6 +65,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, WKNavigationDelegat
             label.textAlignment = .center
             vc.view.addSubview(label)
         }
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        NotificationCenter.default.addObserver(self, selector: #selector(batteryChanged),
+                 name: UIDevice.batteryLevelDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(batteryChanged),
+                 name: UIDevice.batteryStateDidChangeNotification, object: nil)
         checkForUpdatesSilently()
         return true
     }
@@ -104,9 +114,70 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, WKNavigationDelegat
             checkTouchID()
         case "updateCheck":
             checkForUpdatesSilently()
+        case "batteryRequest":
+            batteryChanged()
+        case "peerIdentity":
+            nearby.configure(id: body["id"] as? String ?? "",
+                name: body["name"] as? String ?? "Aibo User",
+                photo: body["photo"] as? String ?? "")
+        case "peerSend":
+            nearby.message(to: body["to"] as? String ?? "",
+                text: body["text"] as? String ?? "",
+                messageID: body["id"] as? String ?? "")
+        case "peerCall":
+            nearby.call(to: body["to"] as? String ?? "")
+        case "peerAccept":
+            nearby.acceptCall(from: body["from"] as? String ?? "")
+        case "peerDecline":
+            nearby.declineCall(from: body["from"] as? String ?? "")
+        case "peerHangup":
+            nearby.hangup()
+        case "faceStatus":
+            emit("faceStatus", ["enrolled": AiboFaceCheckController.enrolled(),
+                  "enabled": UserDefaults.standard.bool(forKey: "aiboFaceEnabled")])
+        case "faceEnroll":
+            showFaceCheck(enroll: true)
+        case "faceVerify":
+            if UserDefaults.standard.bool(forKey: "aiboFaceEnabled") && AiboFaceCheckController.enrolled() {
+                showFaceCheck(enroll: false)
+            } else {
+                emit("faceCheckResult", ["ok": false, "mode": "verify", "message": "Face Check not enrolled"])
+            }
+        case "faceDisable":
+            AiboFaceCheckController.erase()
+            emit("faceStatus", ["enrolled": false, "enabled": false])
         default:
             break
         }
+    }
+
+    @objc private func batteryChanged() {
+        let d = UIDevice.current
+        let level = d.batteryLevel
+        let hasLevel = level >= 0 && level <= 1
+        emit("batteryStatus", ["level": hasLevel ? Double(level) : -1,
+             "charging": d.batteryState == .charging || d.batteryState == .full,
+             "state": d.batteryState == .full ? "full" : d.batteryState == .charging ? "charging" : "unplugged"])
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        batteryChanged()
+    }
+
+    private func showFaceCheck(enroll: Bool) {
+        guard let parent = window?.rootViewController, parent.presentedViewController == nil else {
+            emit("faceCheckResult", ["ok": false, "mode": enroll ? "enroll" : "verify", "message": "Camera is busy"])
+            return
+        }
+        let check = AiboFaceCheckController()
+        check.purpose = enroll ? .enroll : .verify
+        check.modalPresentationStyle = .fullScreen
+        check.completion = { [weak self] ok, message in
+            self?.emit("faceCheckResult", ["ok": ok, "mode": enroll ? "enroll" : "verify", "message": message])
+            if enroll { self?.emit("faceStatus", ["enrolled": AiboFaceCheckController.enrolled(),
+                "enabled": UserDefaults.standard.bool(forKey: "aiboFaceEnabled")]) }
+        }
+        parent.present(check, animated: true)
     }
 
     private func setTorch(_ enabled: Bool) {
@@ -264,6 +335,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, WKNavigationDelegat
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+        nearby.hangup()
         stopVoice(silent: true)
         if torchEnabled { setTorch(false) }
     }
