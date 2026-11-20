@@ -25,7 +25,7 @@ jobs:
       - name: Install live image builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-common syslinux-utils grub-efi-amd64-bin
+          sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-common syslinux-utils grub-efi-amd64-bin librsvg2-bin
       - name: Fix Ubuntu live-build legacy Debian Contents URL
         run: |
           sudo python3 - <<'PY'
@@ -42,6 +42,54 @@ jobs:
               changed=changed.replace(old2,'/dists/${LB_DISTRIBUTION}/main/Contents-')
               path.write_text(changed)
               print(filename, 'patched', changed!=data)
+          PY
+      - name: Fix obsolete Ubuntu live-build rsvg command before ISO bootstrap
+        run: |
+          command -v rsvg-convert
+          rsvg-convert --version
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          
+          substitutions = (
+              ('Check_package chroot/usr/bin/rsvg librsvg2-bin', 'Check_package chroot/usr/bin/rsvg-convert librsvg2-bin'),
+              ('[ ! -e /usr/bin/rsvg ]', '[ ! -e /usr/bin/rsvg-convert ]'),
+              ('Echo_error "/usr/bin/rsvg - no such file"', 'Echo_error "/usr/bin/rsvg-convert - no such file"'),
+              ('Chroot chroot "rsvg --format png --height 480 --width 640 splash.svg splash.png"',
+               'Chroot chroot "rsvg-convert --format png --height 480 --width 640 splash.svg -o splash.png"'),
+              ('rsvg --format png --height 480 --width 640 "${_TARGET}/splash.svg" "${_TARGET}/splash.png"',
+               'rsvg-convert --format png --height 480 --width 640 "${_TARGET}/splash.svg" -o "${_TARGET}/splash.png"'),
+          )
+          def patch(text):
+              updated = text
+              for old, new in substitutions:
+                  updated = updated.replace(old, new)
+              if re.search(r'(?<![\w-])rsvg\s+--format|/usr/bin/rsvg(?!-convert)', updated):
+                  raise SystemExit('Obsolete live-build rsvg invocation remains; fail before costly ISO bootstrap')
+              return updated
+          
+          paths = [Path('/usr/lib/live/build/lb_binary_syslinux'), Path('/usr/lib/live/build/binary_syslinux')]
+          found = []
+          converted = []
+          for path in paths:
+              if not path.is_file():
+                  continue
+              found.append(path)
+              old = path.read_text()
+              if 'rsvg' not in old:
+                  continue
+              new = patch(old)
+              if 'rsvg-convert' not in new:
+                  raise SystemExit(f'No rsvg-convert call or check in {path}')
+              if new != old:
+                  path.write_text(new)
+              subprocess.run(['sh', '-n', str(path)], check=True)
+              converted.append(path)
+              print(f'{path}: patched and shell syntax checked')
+          if not found or not converted:
+              raise SystemExit('Could not validate live-build Syslinux SVG conversion script')
+          print('Old live-build SVG command compatibility check passed')
           PY
       - name: Build bootable Debian live ISO
         run: sudo bash linux-iso/build.sh
