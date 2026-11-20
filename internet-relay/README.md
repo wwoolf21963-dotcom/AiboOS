@@ -1,5 +1,18 @@
 # AiboOS Internet Relay (prototype)
 
+> **AiboOS 1.8 encryption setup required.** New messages use AES-256-GCM
+> encryption at rest. The Worker requires a Cloudflare secret named
+> `AIBO_MESSAGE_ENCRYPTION_KEY` (64 random hex characters) and the D1 binding
+> `DB`. With either missing, the service deliberately reports offline.
+> See the [750-word Access and Encryption Guide](ACCESS_AND_ENCRYPTION_GUIDE.md)
+> for the full steps, access controls, testing, and erase behavior.
+>
+> `wrangler.toml` now targets the existing Worker `aibomesgsystem`.
+> Do not put the encryption secret into GitHub or the AiboOS app.
+> Encryption here is **server-side at-rest encryption, not end-to-end encryption**.
+> Previously stored plaintext messages are legacy data and remain unencrypted until migrated or deleted.
+
+
 A real HTTPS inbox for AiboOS IDs over mobile data and Wi-Fi, using Cloudflare Workers + D1.
 It is **not deployed** until you connect your Cloudflare account and publish it.
 
