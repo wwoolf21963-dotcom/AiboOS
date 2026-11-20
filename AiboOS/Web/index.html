@@ -1688,7 +1688,7 @@ window.addEventListener('aibo-native', ev => {
       S.remoteProfiles = S.remoteProfiles || {};
       S.remoteProfiles[e.id] = {
         name: String(e.name || 'Aibo User').slice(0,48),
-        photo: String(e.photo||'').startsWith('data:image/') && (e.photo||'').length < 25000 ? e.photo : ''
+        photo: typeof e.photo === 'string' && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(e.photo) && e.photo.length < 25000 ? e.photo : ''
       };
       save(); Bus.emit('threads'); Bus.emit('chat:'+e.id);
     }
