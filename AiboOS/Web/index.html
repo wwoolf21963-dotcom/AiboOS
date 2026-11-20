@@ -1195,7 +1195,7 @@ const DEFAULTS = {
   installed: ['phone', 'messages', 'aibobrowser'].concat(APP_ORDER), names: {}, icons: {}, badges: {}, searchPill: true,
   notifs: [], notifAllow: {}, recents: [],
   notes: [], reminders: [], events: [], contacts: [], calls: [], alarms: [], worldClocks: ['Europe/London', 'America/New_York', 'Asia/Tokyo'],
-  aiboId: '', aiboName: '', aiboPhoto: '', remoteProfiles: {}, faceUnlock: false, localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
+  aiboId: '', aiboName: '', aiboPhoto: '', aiboRelayURL: '', cloudReceiptSince: 0, remoteProfiles: {}, faceUnlock: false, localMsgs: {}, askHistory: [], heyAibo: false, aiboSpeak: true, aiboVoice: 'airy',
   fitness: [], savedImgs: [], tf: { best: 0 }, browserHome: [],
   font: 'system', iconShape: 'squircle', iconSize: 'medium', cols: 4, labels: true, wallDim: 0, lockColor: '', animSpeed: 'normal', battPct: false, termHist: [],
   autoLock: 120, lockOnExit: false, eraseOnFail: false, lockedApps: [], failCount: 0, storeRegion: 'GB', appColours: true, dockMax: 4, cardRadius: 24, iconStyle: 'default', islandIdle: 'pill', webApps: []
@@ -3714,6 +3714,182 @@ function contactEdit(id, done, deleted) {
 defineApp('contacts', { launch(w) { w.nav = new Nav(w.body, contactsPage()); Bus.on('contacts:show', id => { w.nav.popTo(0); w.nav.push(contactPage(id), false); }); } });
 
 
+/* AiboOS Internet Messaging. Uses HTTPS + Wi-Fi OR cellular, not local peer discovery.
+   No public relay is configured by default; do not claim remote messages were sent
+   until the HTTPS server confirms receiving them. Messages are NOT end-to-end encrypted. */
+const AiboCloud = {
+  endpoint: '', ready: false, starting: false, syncBusy: false,
+  init() {
+    this.endpoint = String(S.aiboRelayURL || '').replace(/\/+$/, '');
+    if (this.endpoint) this.register();
+    setInterval(() => {
+      if (!this.endpoint || document.hidden || navigator.onLine === false) return;
+      if (this.ready) this.sync();
+      else if (!this.starting) this.register();
+    }, 12000);
+    window.addEventListener('online', () => { if (this.endpoint) this.ready ? this.sync() : this.register(); });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.endpoint) this.ready ? this.sync() : this.register();
+    });
+  },
+  secret() {
+    let key = '';
+    try { key = localStorage.getItem('aiboos-cloud-device-key') || ''; } catch(e) {}
+    if (/^[a-f0-9]{64}$/.test(key)) return key;
+    if (!window.crypto || !crypto.getRandomValues) throw Error('A secure browser is required for internet messaging');
+    const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+    key = Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+    try {localStorage.setItem('aiboos-cloud-device-key', key);} catch(e) {throw Error('This browser cannot save the Aibo ID device key');}
+    return key;
+  },
+  setEndpoint(address) {
+    const trimmed = String(address || '').trim();
+    if (!trimmed) {
+      this.endpoint = ''; this.ready = false; S.aiboRelayURL = ''; save();
+      Bus.emit('cloud:status'); Bus.emit('threads'); return;
+    }
+    let url;
+    try { url = new URL(trimmed); } catch(e) {throw Error('Enter a full https:// internet relay URL');}
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+      throw Error('The internet relay URL must use HTTPS');
+    this.endpoint = url.origin + url.pathname.replace(/\/+$/, '');
+    this.ready = false; S.aiboRelayURL = this.endpoint; S.cloudReceiptSince = 0; save();
+    Bus.emit('cloud:status');
+    this.register();
+  },
+  async request(path,method='GET',payload) {
+    if (!this.endpoint) throw Error('Internet relay not configured');
+    const controller = new AbortController(), timeout = setTimeout(()=>controller.abort(),11000);
+    try {
+      const response = await fetch(this.endpoint + path, {
+        method, mode:'cors', cache:'no-store', credentials:'omit',
+        headers:{'Authorization':'Bearer '+this.secret(),'Content-Type':'application/json'},
+        body:payload === undefined ? undefined : JSON.stringify(payload),
+        signal:controller.signal
+      });
+      const data = await response.json();
+      if(!response.ok) throw Error(String(data.error || ('Relay error '+response.status)));
+      return data;
+    } catch(e) {
+      if(e.name==='AbortError') throw Error('Internet relay request timed out');
+      throw e;
+    } finally {clearTimeout(timeout);}
+  },
+  async register() {
+    if (!this.endpoint || this.starting) return;
+    this.starting = true;
+    try {
+      const original = myAibo();
+      const data = await this.request('/v1/register','POST',{
+        id:original, name:aiboProfileName(), photo:S.aiboPhoto||''
+      });
+      if(!/^[0-9]{7}$/.test(data.id || '')) throw Error('Relay returned an invalid Aibo ID');
+      if(original !== data.id) {
+        S.aiboId = data.id;
+        saveNow();
+        toast('Your worldwide AiboID is '+fmtAibo(data.id));
+        if(AiboNative.available) AiboNative.send('peerIdentity',{id:myAibo(),name:aiboProfileName(),photo:S.aiboPhoto||''});
+      }
+      this.ready = true; this.error = '';
+      Bus.emit('cloud:status'); Bus.emit('threads');
+      this.flush(); this.sync();
+    } catch(e) {
+      this.ready = false; this.error = e.message || 'Could not connect to internet relay';
+      Bus.emit('cloud:status'); Bus.emit('threads');
+    } finally {this.starting = false;}
+  },
+  async lookup(id) {
+    if(!/^[0-9]{7}$/.test(String(id||''))) throw Error('Enter a 7-digit Aibo ID');
+    if(!this.ready) throw Error('Connect to the Internet Messaging server first');
+    const result = await this.request('/v1/profile/'+id);
+    if(result.found && result.profile) {
+      const p = result.profile;
+      S.remoteProfiles = S.remoteProfiles || {};
+      S.remoteProfiles[id] = {
+        name:String(p.name || 'Aibo User').slice(0,48),
+        photo:typeof p.photo === 'string' && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(p.photo) && p.photo.length<25000?p.photo:''
+      };
+      save(); Bus.emit('threads');
+    }
+    return result;
+  },
+  async send(m) {
+    if(!this.endpoint || !m || !m.id || !m.to) return;
+    if (!this.ready) {m.delivery='pending';save();return;}
+    if (m.delivery === 'delivered') return;
+    try {
+      const result = await this.request('/v1/messages','POST',{
+        clientId:m.id,to:m.to,text:m.text
+      });
+      m.delivery = result.delivered ? 'delivered' : 'queued';
+      delete m.deliveryError;
+      save(); Bus.emit('chat:'+m.to); Bus.emit('threads');
+    } catch(e) {
+      m.delivery='failed';m.deliveryError=e.message || 'Internet unavailable';
+      save();Bus.emit('chat:'+m.to);Bus.emit('threads');
+    }
+  },
+  flush() {
+    if(!this.ready) return;
+    let count=0;
+    for(const arr of Object.values(S.localMsgs||{})) for(const m of arr) {
+      if(m.from===myAibo() && (m.delivery==='pending'||m.delivery==='failed') && count++ < 25) this.send(m);
+    }
+  },
+  async sync() {
+    if(!this.ready || this.syncBusy || document.hidden) return;
+    this.syncBusy=true;
+    try {
+      const data=await this.request('/v1/sync?receiptSince='+(Number(S.cloudReceiptSince)||0));
+      const incoming=Array.isArray(data.messages)?data.messages:[];
+      for(const m of incoming) {
+        const from=String(m.sender||''),to=myAibo();
+        if(!/^[0-9]{7}$/.test(from)||typeof m.text!=='string'||!Number.isSafeInteger(Number(m.serverId)))continue;
+        const conv=convId(from,to), old=localMsgs(conv);
+        if(!old.some(x=>x.from===from && x.id===m.clientId)) {
+          localPush(conv,{id:String(m.clientId||uid()).slice(0,64),conv,from,to,
+            text:m.text.slice(0,4000),name:String(m.name||'Aibo User').slice(0,48),
+            ts:Number(m.ts)||Date.now(),delivery:'received'});
+          if(!contactByAibo(from)) {
+            S.remoteProfiles=S.remoteProfiles||{};
+            S.remoteProfiles[from]={name:String(m.name||'Aibo User').slice(0,48),
+              photo:typeof m.photo==='string'&&/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(m.photo)&&m.photo.length<25000?m.photo:''};
+          }
+          saveNow();
+          if(Msg.open!==from)notify('messages',aiboPeerName(from),m.text.slice(0,160));
+          Bus.emit('threads');Bus.emit('chat:'+from);
+        }
+        // Acknowledge only after the message was kept in local history.
+        await this.request('/v1/ack','POST',{serverId:m.serverId});
+      }
+      const receipts=Array.isArray(data.receipts)?data.receipts:[];
+      for(const rcpt of receipts){
+        for(const arr of Object.values(S.localMsgs||{}))for(const m of arr){
+          if(m.from===myAibo() && m.id===rcpt.clientId){
+            m.delivery='delivered';Bus.emit('chat:'+m.to);
+          }
+        }
+        S.cloudReceiptSince=Math.max(Number(S.cloudReceiptSince)||0,Number(rcpt.deliveredAt)||0);
+      }
+      if(receipts.length)save();
+      this.error='';
+    }catch(e){
+      this.error=e.message||'Could not check internet messages';
+      Bus.emit('cloud:status');
+      // Re-register after transport errors on the next timer tick.
+      if(/not registered|401/.test(this.error))this.ready=false;
+    }finally{this.syncBusy=false;}
+  }
+};
+function aiboCloudSettings(after){
+  const box=el('<div class="ce"><p class="aibo-cloud-note">Worldwide Aibo Messages works through a hosted Internet relay. It can use Wi-Fi or mobile data. Messages are NOT end-to-end encrypted in this beta.</p><div class="list"><input class="ce-in cloud-url" type="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://your-relay.workers.dev" value="'+esc(S.aiboRelayURL||'')+'"></div><p class="aibo-cloud-note">Both people need accounts on the same relay. AiboOS will show real profiles and delivery status. A server must be deployed before worldwide messages can work.</p><button class="as-sm cloud-off">Disconnect relay</button></div>');
+  on(box,'click','.cloud-off',()=>{AiboCloud.setEndpoint('');toast('Internet relay disconnected');h.close();if(after)after();});
+  const h=Sheet.open({title:'Internet Messaging',content:box,done:'Connect',detent:'large',onDone:()=>{
+    try{AiboCloud.setEndpoint(box.querySelector('.cloud-url').value);toast('Checking internet relay…');if(after)after();}
+    catch(e){toast(e.message,'!','','red');return false;}
+  }});
+}
+
 /* AiboID is a local 7-digit address. Nearby identities are not verified. */
 const AiboPeers = {list:[]}, AiboCalls = {to:null,state:'idle',incoming:null};
 function aiboProfileName(){return String(S.aiboName||S.name||'Aibo User').trim().slice(0,48)||'Aibo User';}
@@ -3749,6 +3925,7 @@ function aiboProfileEdit(after){
     if(!n){toast('Choose a name','!','','red');return false;}
     S.aiboName=n;S.aiboPhoto=photo;save();
     AiboNative.send('peerIdentity',{id:myAibo(),name:n,photo:photo});
+    if(AiboCloud.endpoint)AiboCloud.register();
     Bus.emit('threads'); if(after)after();
   }});
 }
@@ -3836,9 +4013,10 @@ function allThreads() {
   return Object.keys(map).map(k => map[k]).sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 function messageSend(to, text) {
-  const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboNative.available ? 'waiting':'local' };
+  const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboCloud.endpoint ? 'pending' : (AiboNative.available?'waiting':'local') };
   localPush(conv, m); playSfx('send');
-  if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
+  if(AiboCloud.endpoint)AiboCloud.send(m);
+  else if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
   if (AIBODB) { try { AIBODB.doc('msgs/' + m.ts + '-' + Math.floor(Math.random() * 100000)).set(m); AIBODB.doc('threads/' + from + '/list/' + to).set({ 'with': to, last: text, ts: m.ts, dir: 'out' }); AIBODB.doc('threads/' + to + '/list/' + from).set({ 'with': from, last: text, ts: m.ts, dir: 'in' }); } catch (e) { } }
   Bus.emit('threads'); Bus.emit('chat:' + to, null);
 }
@@ -5252,7 +5430,7 @@ async function boot() {
   if (!S.aiboThemeApplied) { S.aiboThemeApplied = true; applyThemePreset('aibo'); await new Promise(r => setTimeout(r, 50)); }
   Home.render();
   if (typeof myAibo === 'function') myAibo();
-  initDB(); initBattery();
+  initDB(); initBattery(); AiboCloud.init();
   if (hasClaude()) { try { claude.use('downloads').then(d => DLH.d = d || null).catch(() => { }); } catch (e) { } }
   musicLoadSongs();
   setInterval(sysTick, 1000); sysTick();
