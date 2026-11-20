@@ -4428,17 +4428,116 @@ function allThreads() {
   Object.keys(S.localMsgs || {}).forEach(conv => { const a = S.localMsgs[conv]; if (!a.length) return; const last = a[a.length - 1], other = last.from === me ? last.to : last.from; if (!map[other] || (map[other].ts || 0) < last.ts) map[other] = { 'with': other, last: last.text, ts: last.ts }; });
   return Object.keys(map).map(k => map[k]).sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
-function messageSend(to, text) {
-  const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboCloud.endpoint ? 'pending' : (AiboNative.available?'waiting':'local') };
-  playSfx('send');
-  localPush(conv, m).then(saved => {
-    if (!saved) {
-      m.delivery='failed'; m.deliveryError='Could not save on this phone';
-      Bus.emit('chat:'+to); Bus.emit('threads');
-      return;
+/* ==== AiboOS media messages: photos, videos, voice notes ==== */
+const AiboMedia = {
+  prefix: 'aibo:media:v1:',
+  limits: {photo: 6*1024*1024, voice: 4*1024*1024, video: 24*1024*1024},
+  label(kind) {return kind==='photo'?'📷 Photo':kind==='video'?'🎥 Video':'🎤 Voice note';},
+  accepted: {
+    photo:['image/jpeg','image/png','image/webp','image/heic','image/heif'],
+    video:['video/mp4','video/quicktime','video/webm','video/3gpp'],
+    voice:['audio/mp4','audio/webm','audio/aac','audio/ogg','audio/mpeg','audio/wav','audio/x-m4a']
+  },
+  validate(file,kind) {
+    const type=String(file.type||'').toLowerCase().split(';')[0];
+    if(!this.accepted[kind] || !this.accepted[kind].includes(type))
+      throw Error('Unsupported '+kind+' format. Use JPEG, PNG, MP4 or a supported audio file.');
+    if(!file.size || file.size>this.limits[kind])
+      throw Error(kind+' too large. Limits: photo 6 MB, voice 4 MB, video 24 MB.');
+    if(!PhoneMsgStore.ready)throw Error('Phone media storage is unavailable');
+    return type;
+  },
+  encode(m) {
+    const a=m.attachment;
+    return this.prefix+JSON.stringify({text:String(m.text||'').slice(0,150),
+      attachment:{id:a.id,kind:a.kind,type:a.type,size:a.size}});
+  },
+  decode(raw) {
+    if(!raw.startsWith(this.prefix))return null;
+    try {
+      const obj=JSON.parse(raw.slice(this.prefix.length)), a=obj.attachment;
+      if(!a||!this.accepted[a.kind]||!this.accepted[a.kind].includes(a.type)||
+         !/^[1-9][0-9]{6}-[0-9a-f]{32}$/.test(String(a.id||''))||
+         !Number.isSafeInteger(a.size)||a.size<1||a.size>this.limits[a.kind])return null;
+      return {text:this.label(a.kind),attachment:{id:a.id,kind:a.kind,type:a.type,size:a.size}};
+    }catch(e){return null;}
+  },
+  async upload(m) {
+    const blob=await PhoneMsgStore.mediaGet(m);
+    if(!blob)throw Error('Attachment is missing from this phone');
+    if(blob.size!==m.attachment.size)throw Error('Attachment size changed');
+    const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),90000);
+    try {
+      const response=await fetch(AiboCloud.endpoint+'/v1/media',{
+        method:'PUT', mode:'cors', cache:'no-store', credentials:'omit',
+        headers:{
+          'Authorization':'Bearer '+AiboCloud.secret(),
+          'Content-Type':m.attachment.type,
+          'X-Aibo-Recipient':m.to,
+          'X-Aibo-Media-Kind':m.attachment.kind
+        },body:blob,signal:controller.signal
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw Error(data.error||'Media upload failed');
+      if(!/^[1-9][0-9]{6}-[a-f0-9]{32}$/.test(String(data.id||'')))
+        throw Error('Server returned an invalid attachment ID');
+      return data.id;
+    }finally{clearTimeout(timer);}
+  },
+  async download(attachment) {
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
+    try {
+      const response=await fetch(AiboCloud.endpoint+'/v1/media/'+attachment.id,{
+        method:'GET',mode:'cors',cache:'no-store',credentials:'omit',
+        headers:{'Authorization':'Bearer '+AiboCloud.secret()},
+        signal:controller.signal
+      });
+      if(!response.ok){
+        const data=await response.json().catch(()=>({}));
+        throw Error(data.error||'Could not download attachment');
+      }
+      const blob=await response.blob();
+      if(blob.size!==attachment.size)throw Error('Incomplete attachment download');
+      return blob;
+    }finally{clearTimeout(timer);}
+  },
+  async open(message,button,urls) {
+    const blob=await PhoneMsgStore.mediaGet(message);
+    if(!blob)throw Error('This attachment is not saved on your phone');
+    const a=message.attachment, src=URL.createObjectURL(blob);
+    urls.push(src);
+    let el;
+    if(a.kind==='photo') {
+      el=document.createElement('img');el.alt='Photo from '+aiboPeerName(message.from);
+    }else if(a.kind==='voice') {
+      el=document.createElement('audio');el.controls=true;el.preload='metadata';
+    }else {
+      el=document.createElement('video');el.controls=true;el.playsInline=true;el.preload='metadata';
     }
+    el.className='aibo-media-preview';el.src=src;
+    button.replaceWith(el);
+  }
+};
+function messageSend(to, text, attachmentBlob, mediaKind) {
+  const from = myAibo(), conv = convId(from, to), m = { id:uid(), conv, from, to, text: String(text),name:aiboProfileName(),ts: Date.now(), delivery: AiboCloud.endpoint ? 'pending' : (AiboNative.available?'waiting':'local') };
+  if(attachmentBlob) {
+    try {
+      const type=AiboMedia.validate(attachmentBlob,mediaKind);
+      m.attachment={kind:mediaKind,type,size:attachmentBlob.size,id:''};
+      m.text=AiboMedia.label(mediaKind);
+    }catch(error){toast(error.message,'!','','red');return;}
+  }
+  playSfx('send');
+  const persistBlob=attachmentBlob ? PhoneMsgStore.mediaSave(m,attachmentBlob) : Promise.resolve(true);
+  persistBlob.then(()=>localPush(conv,m)).then(saved => {
+    if(!saved)throw Error('Could not save on this phone');
     if(AiboCloud.endpoint) AiboCloud.send(m);
-    else if(AiboNative.available) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
+    else if(AiboNative.available && !m.attachment) AiboNative.send('peerSend',{to,text:m.text,id:m.id});
+    else if(m.attachment)throw Error('Media requires Internet Messaging');
+  }).catch(error=>{
+    m.delivery='failed';m.deliveryError=error.message||'Phone storage unavailable';
+    toast(m.deliveryError,'!','','red');
+    Bus.emit('chat:'+to);Bus.emit('threads');
   });
   if (AIBODB) { try { AIBODB.doc('msgs/' + m.ts + '-' + Math.floor(Math.random() * 100000)).set(m); AIBODB.doc('threads/' + from + '/list/' + to).set({ 'with': to, last: text, ts: m.ts, dir: 'out' }); AIBODB.doc('threads/' + to + '/list/' + from).set({ 'with': from, last: text, ts: m.ts, dir: 'in' }); } catch (e) { } }
   Bus.emit('threads'); Bus.emit('chat:' + to, null);
