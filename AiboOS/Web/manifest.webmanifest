@@ -1,1 +1,35 @@
-{"name":"AiboOS","short_name":"AiboOS","display":"standalone","orientation":"portrait","background_color":"#000000","theme_color":"#000000","start_url":"./","icons":[{"src":"touch-icon.png","sizes":"180x180","type":"image/png","purpose":"any maskable"}]}
+{
+  "id": "./index.html",
+  "name": "AiboOS 1.8",
+  "short_name": "AiboOS",
+  "description": "AiboOS interactive phone interface and AiboID messaging for ChromeOS and web",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#130f19",
+  "theme_color": "#ef5f7e",
+  "categories": [
+    "productivity",
+    "social"
+  ],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "aibo-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
