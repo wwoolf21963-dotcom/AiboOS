@@ -2,6 +2,53 @@
 // Internet messaging across Wi-Fi and cellular. Stores plain-text messages; NOT E2EE.
 // Do not advertise as a private/production messenger until abuse prevention and
 // security review have been completed.
+
+// AES-256-GCM protects newly stored message bodies in D1. The secret is
+// configured with wrangler secret put AIBO_MESSAGE_ENCRYPTION_KEY.
+// Do NOT commit the secret or put it in the browser app. NOT end-to-end encryption.
+const ENC_PREFIX="enc:v1:";
+const encoder=new TextEncoder(),decoder=new TextDecoder();
+function hexKey(env) {
+  const hex=String(env.AIBO_MESSAGE_ENCRYPTION_KEY||"");
+  if(!/^[0-9a-fA-F]{64}$/.test(hex))throw Error("Encryption secret missing or invalid");
+  return Uint8Array.from(hex.match(/../g),v=>parseInt(v,16));
+}
+async function cryptoKey(env) {
+  return crypto.subtle.importKey("raw",hexKey(env),{name:"AES-GCM"},false,["encrypt","decrypt"]);
+}
+function b64(bytes) {
+  let result="";
+  for(let i=0;i<bytes.length;i+=4096)
+    result+=String.fromCharCode(...bytes.subarray(i,i+4096));
+  return btoa(result);
+}
+function unb64(encoded) {
+  return Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+}
+function context(id,from,to) {return encoder.encode(id+"|"+from+"|"+to);}
+async function encryptMessage(text,id,from,to,env) {
+  const nonce=crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext=new Uint8Array(await crypto.subtle.encrypt(
+    {name:"AES-GCM",iv:nonce,additionalData:context(id,from,to)},
+    await cryptoKey(env),encoder.encode(text)
+  ));
+  const payload=new Uint8Array(nonce.length+ciphertext.length);
+  payload.set(nonce);payload.set(ciphertext,nonce.length);
+  return ENC_PREFIX+b64(payload);
+}
+async function decryptMessage(message,env) {
+  // Older test messages were stored unencrypted. They are still legacy data
+  // until erased or migrated; never claim encryption protected those rows.
+  if(!message.text.startsWith(ENC_PREFIX))return message.text;
+  const payload=unb64(message.text.slice(ENC_PREFIX.length));
+  if(payload.length<29)throw Error("Invalid encrypted message");
+  const plain=await crypto.subtle.decrypt(
+    {name:"AES-GCM",iv:payload.subarray(0,12),
+     additionalData:context(message.clientId,message.sender,message.recipient)},
+    await cryptoKey(env),payload.subarray(12)
+  );
+  return decoder.decode(plain);
+}
 const ID = /^[1-9][0-9]{6}$/;
 const PICTURE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const NO_STORE = {"Content-Type":"application/json; charset=utf-8",
@@ -42,9 +89,11 @@ export default {
  async fetch(request,env){
   if(request.method==="OPTIONS")return new Response(null,{status:204,headers:NO_STORE});
   if(!env.DB)return reply({error:"Database binding missing"},503);
+  if(!/^[0-9a-fA-F]{64}$/.test(String(env.AIBO_MESSAGE_ENCRYPTION_KEY||"")))
+    return reply({error:"Message encryption not configured"},503);
   const url=new URL(request.url),path=url.pathname;
   try{
-   if(request.method==="GET"&&path==="/v1/health")return reply({ok:true,service:"AiboOS Internet Relay",version:1});
+   if(request.method==="GET"&&path==="/v1/health")return reply({ok:true,service:"AiboOS Internet Relay",version:2,messageEncryption:"AES-256-GCM at rest"});
    if(request.method==="POST"&&path==="/v1/register"){
       const authorization=request.headers.get("Authorization")||"";
       if(!/^Bearer [a-fA-F0-9]{64}$/.test(authorization))return reply({error:"A private device key is required"},401);
@@ -98,9 +147,10 @@ export default {
         return reply({error:"Message limit reached. Try again shortly."},429);
       const dest=await env.DB.prepare("SELECT id FROM accounts WHERE id=?").bind(m.to).first();
       if(!dest)return reply({error:"That Aibo ID doesn't exist"},404);
+      const encrypted=await encryptMessage(m.text.trim(),m.clientId,me.id,m.to,env);
       await env.DB.prepare(
         "INSERT OR IGNORE INTO messages(client_id,from_id,to_id,text,ts) VALUES(?,?,?,?,?)"
-      ).bind(m.clientId,me.id,m.to,m.text.trim(),Date.now()).run();
+      ).bind(m.clientId,me.id,m.to,encrypted,Date.now()).run();
       const saved=await env.DB.prepare("SELECT id,delivered_at FROM messages WHERE from_id=? AND client_id=?")
         .bind(me.id,m.clientId).first();
       return reply({queued:true,serverId:saved.id,delivered:!!saved.delivered_at});
@@ -114,6 +164,7 @@ export default {
         "m.text,m.ts,a.name,a.photo FROM messages m JOIN accounts a ON a.id=m.from_id "+
         "WHERE m.to_id=? AND m.delivered_at IS NULL ORDER BY m.id LIMIT 100"
       ).bind(me.id).all();
+      for(const message of messages.results||[])message.text=await decryptMessage(message,env);
       const receipts=await env.DB.prepare(
         "SELECT client_id AS clientId,delivered_at AS deliveredAt FROM messages "+
         "WHERE from_id=? AND delivered_at IS NOT NULL AND delivered_at>? ORDER BY delivered_at LIMIT 100"
@@ -135,7 +186,7 @@ export default {
         env.DB.prepare("DELETE FROM messages WHERE from_id=? OR to_id=?").bind(me.id,me.id),
         env.DB.prepare("DELETE FROM accounts WHERE id=?").bind(me.id)
       ]);
-      return reply({deleted:true});
+      return reply({deleted:true,id:me.id});
    }
    return reply({error:"Not found"},404);
   }catch(e){
