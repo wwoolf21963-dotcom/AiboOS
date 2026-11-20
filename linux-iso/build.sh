@@ -25,7 +25,6 @@ lb config --mode debian --distribution trixie --architectures amd64 \
   --iso-application "AiboOS Linux Edition" \
   --iso-publisher "AiboOS community prototype" \
   --iso-volume "AIBOOS_LINUX" \
-  # Ubuntu 24.04 live-build uses 'false', not Debian's newer 'none'.
   --debian-installer false
 # Work around Ubuntu runner live-build defaulting to the obsolete /trixie/updates security suite.
 # Explicitly install the correct Debian 13 security archive in the build and final OS.
