@@ -20,11 +20,12 @@ jobs:
       - name: Fast shell syntax preflight (before package downloads)
         run: |
           bash -n linux-iso/build.sh
+          bash -n linux-iso/prepare-isolinux.sh
           sh -n linux-iso/aiboos-start
       - name: Install live image builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-utils grub-efi-amd64-bin
+          sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-common syslinux-utils grub-efi-amd64-bin
       - name: Fix Ubuntu live-build legacy Debian Contents URL
         run: |
           sudo python3 - <<'PY'

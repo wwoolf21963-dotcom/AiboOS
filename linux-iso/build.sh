@@ -39,6 +39,8 @@ if [[ ! -f config/binary ]] || ! grep -Eq '^LB_DEBIAN_INSTALLER="?false"?$' conf
   exit 1
 fi
 
+# Resolve legacy live-build bootloader links before the long Debian image build.
+bash "$DIST/prepare-isolinux.sh"
 mkdir -p config/package-lists
 cp "$DIST/packages.list.chroot" config/package-lists/aiboos.list.chroot
 mkdir -p config/includes.chroot/opt/aiboos/web
