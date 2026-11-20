@@ -36,10 +36,13 @@ jobs:
           html=Path('AiboOS/Web/index.html').read_text()
           scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,re.DOTALL)
           if not scripts: raise SystemExit('AiboOS script not found')
-          Path('/tmp/aiboos-web.js').write_text(scripts[0])
-          print('Found browser script:',len(scripts[0]),'characters')
+          import subprocess
+          for i, script in enumerate(scripts):
+              output=f'/tmp/aiboos-web-{i}.js'
+              Path(output).write_text(script)
+              subprocess.run(['node','--check',output],check=True)
+          print('Checked all',len(scripts),'inline browser scripts')
           PY
-          node --check /tmp/aiboos-web.js
           node --check AiboOS/Web/message-storage.js
       - name: Direct browser preview (works without GitHub Pages)
         run: |
