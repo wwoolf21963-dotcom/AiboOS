@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AiboOS
+GenericName=AiboOS desktop
+Comment=Open the AiboOS Linux interface
+Exec=/usr/local/bin/aiboos-start
+Icon=aiboos
+Terminal=false
+Categories=Utility;System;

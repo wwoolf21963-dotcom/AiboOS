@@ -1,0 +1,15 @@
+# AiboOS Linux Edition live desktop
+live-task-xfce
+xfce4
+lightdm
+chromium
+python3
+curl
+ca-certificates
+network-manager
+sudo
+calamares
+calamares-settings-debian
+fonts-noto-color-emoji
+firmware-iwlwifi
+firmware-realtek

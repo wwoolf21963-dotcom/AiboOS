@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AiboOS Linux
+Comment=Launch the AiboOS shell at login
+Exec=/usr/local/bin/aiboos-start
+Icon=aiboos
+Terminal=false
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true

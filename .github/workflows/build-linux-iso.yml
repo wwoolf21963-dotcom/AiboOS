@@ -1,0 +1,43 @@
+name: Build AiboOS Linux Edition ISO
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'linux-iso/**'
+      - '.github/workflows/build-linux-iso.yml'
+permissions:
+  contents: read
+concurrency:
+  group: aiboos-linux-iso
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install live image builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y live-build debootstrap rsync squashfs-tools xorriso isolinux syslinux-utils grub-efi-amd64-bin
+      - name: Check AiboOS launcher and installer script
+        run: |
+          bash -n linux-iso/build.sh
+          sh -n linux-iso/aiboos-start
+      - name: Build bootable Debian live ISO
+        run: sudo bash linux-iso/build.sh
+      - name: Check image integrity
+        run: |
+          test -s linux-iso/AiboOS_Linux_amd64.iso
+          cd linux-iso
+          sha256sum -c AiboOS_Linux_amd64.iso.sha256
+      - name: Upload live ISO and checksum for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Linux-x86_64-Live-ISO
+          path: |
+            linux-iso/AiboOS_Linux_amd64.iso
+            linux-iso/AiboOS_Linux_amd64.iso.sha256
+          retention-days: 14
+          if-no-files-found: error
