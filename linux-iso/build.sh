@@ -20,10 +20,16 @@ rm -rf config
 lb config --mode debian --distribution trixie --architectures amd64 \
   --binary-images iso-hybrid --archive-areas "main non-free-firmware" \
   --bootappend-live "boot=live components username=aiboos" \
+  --security false \
   --iso-application "AiboOS Linux Edition" \
   --iso-publisher "AiboOS community prototype" \
   --iso-volume "AIBOOS_LINUX" \
   --debian-installer none
+# Work around Ubuntu runner live-build defaulting to the obsolete /trixie/updates security suite.
+# Explicitly install the correct Debian 13 security archive in the build and final OS.
+mkdir -p config/archives
+printf '%s\n' 'deb http://security.debian.org/debian-security trixie-security main non-free-firmware' > config/archives/aiboos-security.list.chroot
+cp config/archives/aiboos-security.list.chroot config/archives/aiboos-security.list.binary
 mkdir -p config/package-lists
 cp "$DIST/packages.list.chroot" config/package-lists/aiboos.list.chroot
 mkdir -p config/includes.chroot/opt/aiboos/web
