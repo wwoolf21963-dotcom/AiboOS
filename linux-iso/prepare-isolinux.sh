@@ -28,6 +28,16 @@ for file in "$BOOT_DIR"/*; do
   fi
 done
 shopt -u nullglob
+# Ubuntu's legacy live-build incorrectly reads a bootlogo cpio archive even in
+# Debian mode, although only Ubuntu mode generates it automatically. Its next
+# Syslinux step uses: cpio -i < binary/isolinux/bootlogo.
+# Supply a valid empty archive to be copied with the custom isolinux theme.
+command -v cpio >/dev/null || { echo "Missing cpio for Isolinux bootlogo" >&2; exit 1; }
+if [[ ! -s "$BOOT_DIR/bootlogo" ]]; then
+  printf '' | cpio --quiet -o -H newc > "$BOOT_DIR/bootlogo"
+fi
+[[ -s "$BOOT_DIR/bootlogo" && ! -L "$BOOT_DIR/bootlogo" ]] || { echo "Missing valid Isolinux bootlogo" >&2; exit 1; }
+cpio --quiet -t < "$BOOT_DIR/bootlogo" >/dev/null || { echo "Invalid bootlogo cpio archive" >&2; exit 1; }
 for filename in isolinux.bin vesamenu.c32 ldlinux.c32 libcom32.c32 libutil.c32 libmenu.c32; do
   [[ -s "$BOOT_DIR/$filename" && ! -L "$BOOT_DIR/$filename" ]] || { echo "Bootloader check failed: $filename" >&2; exit 1; }
 done

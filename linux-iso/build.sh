@@ -56,8 +56,10 @@ mkdir -p config/includes.chroot/usr/share/icons/hicolor/scalable/apps
 cp "$ROOT/AiboOS/Web/aibo-icon.svg" config/includes.chroot/usr/share/icons/hicolor/scalable/apps/aiboos.svg
 echo "Building AiboOS Linux Edition — this does NOT change the current computer's OS."
 lb build
-ISO="$(find "$WORK" -maxdepth 1 -name 'live-image-*.iso' -print -quit)"
-if [[ -z "$ISO" ]]; then echo "No ISO was produced" >&2; exit 1; fi
+# Ubuntu's legacy live-build names hybrid images binary.hybrid.iso; newer
+# variants use live-image-*.iso. Recognize both, and require nonzero size.
+ISO="$(find "$WORK" -maxdepth 1 -type f \\( -name 'live-image-*.iso' -o -name 'binary*.iso' \\) -print -quit)"
+if [[ -z "$ISO" || ! -s "$ISO" ]]; then echo "No nonempty ISO was produced" >&2; exit 1; fi
 cp "$ISO" "$DIST/AiboOS_Linux_amd64.iso"
 sha256sum "$DIST/AiboOS_Linux_amd64.iso" > "$DIST/AiboOS_Linux_amd64.iso.sha256"
 echo "READY: $DIST/AiboOS_Linux_amd64.iso"
