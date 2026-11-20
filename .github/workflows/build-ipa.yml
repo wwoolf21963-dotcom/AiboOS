@@ -64,3 +64,14 @@ jobs:
           else
             gh release create aiboos-se-latest AiboOS_SE_TrollStore.ipa --target "$GITHUB_SHA" --title "AiboOS SE - TrollStore beta" --notes "AiboOS runs as an iOS app on iPhone SE (2016), iOS 15+. It does not replace iOS, and Android APK execution is not supported. Experimental unsigned build, not yet verified on device." --prerelease
           fi
+
+      - name: Publish AiboOS 1.7 versioned IPA download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view aiboos-se-v1.7 >/dev/null 2>&1; then
+            gh release upload aiboos-se-v1.7 AiboOS_SE_TrollStore.ipa --clobber
+          else
+            gh release create aiboos-se-v1.7 AiboOS_SE_TrollStore.ipa --target "$GITHUB_SHA" --title "AiboOS 1.7 SE - Worldwide Messages beta" --notes "Native iPhone SE test IPA with online AiboID profile search and inbox support. Internet messaging requires separately deploying the internet-relay Cloudflare Worker and D1 database. Not a replacement OS. Worldwide calls are not supported." --prerelease
+          fi
