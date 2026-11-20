@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#15101b">
+<meta name="description" content="AiboOS 1.8 custom installer for iPhone SE and ChromeOS.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="aibo-icon.svg">
+<link rel="apple-touch-icon" href="touch-icon.png">
+<title>AiboOS Setup Studio — Install 1.8</title>
+<style>
+:root{color-scheme:dark;--accent:#f77fac;--bg:#130f19;--fg:#fbf5ff;--muted:#c7bace;--line:rgba(255,255,255,.12)}
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(ellipse at 15% 10%,#492638 0,transparent 44%),radial-gradient(ellipse at 95% 100%,#312044 0,transparent 40%),var(--bg);color:var(--fg);margin:0;min-height:100vh}
+a{color:#ffb7d4}button{font:inherit;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid #ffe7f1;outline-offset:3px}
+main{max-width:980px;margin:auto;padding:24px clamp(18px,4vw,48px) 50px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:40px}
+.brand{display:flex;align-items:center;gap:12px;font-size:20px;font-weight:800;letter-spacing:-.04em}.brand img{width:44px;height:44px;border-radius:13px}
+.version{border:1px solid var(--line);border-radius:50px;color:#c9b8d0;padding:8px 13px;font-size:12px}
+.hero{display:grid;grid-template-columns:1.2fr .8fr;align-items:center;gap:30px;margin-bottom:32px}
+.tag{color:var(--accent);font-size:12px;font-weight:850;letter-spacing:.2em;text-transform:uppercase;margin-bottom:14px}
+h1{font-size:clamp(35px,6vw,69px);letter-spacing:-.06em;line-height:1.04;margin:0 0 16px}h1 span{color:var(--accent)}
+.intro{color:#d0c4d3;line-height:1.7;max-width:560px;font-size:15px;margin:0}
+.phone{width:170px;height:265px;border:7px solid #625365;border-radius:31px;background:linear-gradient(120deg,#a24980,#281732);box-shadow:0 16px 65px #0009,0 0 0 3px #9c8b9e;transform:rotate(8deg);margin:auto;padding:25px 14px 14px}
+.phone img{width:88px;display:block;margin:4px auto 25px;border-radius:18px}.apps{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.apps i{background:linear-gradient(135deg,#f49cbe,#a871db);height:33px;border-radius:9px}.apps i:nth-child(even){background:linear-gradient(135deg,#8acbf3,#7e6bdd)}
+.card{border:1px solid var(--line);background:#231b2ce8;border-radius:24px;box-shadow:0 25px 60px #0004;padding:clamp(18px,3.5vw,30px)}
+.progress{display:flex;justify-content:space-between;gap:9px;color:#a99db3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.bar{display:flex;gap:7px;margin:15px 0 23px}.bar i{height:4px;background:#61516b;border-radius:8px;flex:1}.bar i.done{background:var(--accent)}
+h2{font-size:25px;letter-spacing:-.04em;margin:0 0 8px}.desc{color:var(--muted);font-size:14px;line-height:1.6;margin:0 0 21px}
+.devices{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.device{display:flex;align-items:center;gap:15px;width:100%;text-align:left;border:1px solid var(--line);background:#34273d;color:#fff;border-radius:17px;padding:20px 16px}
+.device:hover{background:#44334d}.device.chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:#4c304a}.emoji{font-size:30px}
+.device strong{display:block;font-size:15px}.device small{display:block;color:#c6b8cc;margin-top:6px;font-size:12px;line-height:1.35}
+.buttonrow{display:flex;gap:11px;flex-wrap:wrap;margin-top:24px;align-items:center}
+.primary,.secondary{border-radius:13px;padding:13px 19px;min-height:47px;font-weight:800;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.primary{border:0;background:var(--accent);color:#271622}.primary:disabled{opacity:.42;cursor:not-allowed}
+.secondary{background:#3a2a42;border:1px solid var(--line);color:#fff}
+.palettes{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}
+.swatch{width:40px;height:40px;border-radius:50%;border:3px solid #3c3245}.swatch.selected{outline:2px solid white;outline-offset:2px}
+.note{border:1px solid var(--line);background:#1b1623;border-radius:15px;padding:16px;color:#d6cbdc;font-size:13px;line-height:1.6}
+.note strong{color:white}.note a{text-decoration:underline}.note[hidden],section[hidden]{display:none!important}
+.foot{color:#9a8c9e;line-height:1.8;font-size:12px;margin-top:26px}
+@media(max-width:750px){header{margin-bottom:25px}.hero{grid-template-columns:1fr;gap:10px}.phone{height:120px;transform:translateY(45px) rotate(8deg) scale(.67);margin-top:-35px;overflow:hidden}.hero .visual{height:105px;overflow:hidden}.devices{grid-template-columns:1fr}h1{font-size:43px}}
+</style>
+</head>
+<body>
+<main>
+<header><div class="brand"><img src="aibo-icon.svg" alt="AiboOS logo"> AiboOS</div><div class="version">1.8 · Custom Installer</div></header>
+<div class="hero">
+<div><div class="tag">AiboOS Setup Studio</div><h1>Make it <span>yours.</span><br>Install AiboOS.</h1>
+<p class="intro">A custom setup for your iPhone SE or Chromebook. Choose where AiboOS runs and give it your favourite colour.</p></div>
+<div class="visual" aria-hidden="true"><div class="phone"><img src="aibo-icon.svg" alt=""><div class="apps"><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+</div>
+<div class="card">
+<div class="progress"><span id="stepText">01 / 03 · Choose device</span><span>Install AiboOS 1.8</span></div>
+<div class="bar"><i class="done"></i><i></i><i></i></div>
+<section id="step1">
+<h2>Which device? 📱💻</h2><p class="desc">Pick your device. We'll guide you to the correct installer.</p>
+<div class="devices">
+<button type="button" data-device="iphone" class="device" aria-pressed="false"><span class="emoji">📱</span><span><strong>iPhone SE (2016)</strong><small>iOS 15+ · TrollStore IPA</small></span></button>
+<button type="button" data-device="chromeos" class="device" aria-pressed="false"><span class="emoji">💻</span><span><strong>Chromebook / ChromeOS</strong><small>Install AiboOS as a web app</small></span></button>
+</div>
+<div class="buttonrow"><button type="button" id="next1" class="primary" disabled>Continue →</button></div>
+</section>
+<section id="step2" hidden>
+<h2>Choose your Aibo colour ✨</h2>
+<p class="desc">Personalise your installer. You can also set your AiboOS accent in Settings once it opens.</p>
+<div class="palettes" role="group" aria-label="Installer accent colour">
+<button type="button" data-color="#f77fac" style="background:#f77fac" aria-label="Pink" aria-pressed="true" class="swatch selected"></button>
+<button type="button" data-color="#81b7ff" style="background:#81b7ff" aria-label="Blue" aria-pressed="false" class="swatch"></button>
+<button type="button" data-color="#b9a0ff" style="background:#b9a0ff" aria-label="Purple" aria-pressed="false" class="swatch"></button>
+<button type="button" data-color="#84e2c0" style="background:#84e2c0" aria-label="Mint" aria-pressed="false" class="swatch"></button>
+</div>
+<div class="note">Your chosen colour styles this installer. The AiboOS app itself keeps its own theme settings, so installing won't overwrite your existing messages or setup.</div>
+<div class="buttonrow"><button type="button" class="secondary back" data-back="1">← Back</button><button type="button" id="next2" class="primary">Continue →</button></div>
+</section>
+<section id="step3" hidden>
+<h2 id="finalTitle">You're ready! 🚀</h2><p class="desc" id="finalDesc">Let's install.</p>
+<div id="instructions" class="note"></div>
+<div class="buttonrow">
+<button type="button" class="secondary back" data-back="2">← Back</button>
+<button type="button" id="installButton" class="primary">Install AiboOS →</button>
+<a class="secondary" href="index.html">Open Web Test</a>
+</div>
+<div id="installFeedback" class="note" hidden style="margin-top:16px" role="status" aria-live="polite"></div>
+</section>
+</div>
+<p class="foot"><strong>Beta software:</strong> AiboOS is an app, not an iOS or ChromeOS replacement. The iPhone IPA requires a compatible TrollStore setup. ChromeOS uses a web app, not an iPhone IPA or Android APK. ChromeOS installation is subject to Chrome's permission and device management settings. Worldwide messages require your Cloudflare relay. <a href="https://github.com/wwoolf21963-dotcom/AiboOS">View source</a>.</p>
+</main>
+<script>
+(function(){
+  'use strict';
+  const IPA='https://github.com/wwoolf21963-dotcom/AiboOS/releases/download/aiboos-se-v1.8/AiboOS_SE_TrollStore.ipa';
+  let device=null,promptEvent=null;
+  const get=id=>document.getElementById(id);
+  const show=n=>{
+    [1,2,3].forEach(i=>get('step'+i).hidden=i!==n);
+    document.querySelectorAll('.bar i').forEach((v,i)=>v.classList.toggle('done',i<n));
+    get('stepText').textContent='0'+n+' / 03 · '+['','Choose device','Customise','Install'][n];
+    if(n===3){
+      const iphone=device==='iphone';
+      get('finalTitle').textContent=iphone?'Ready for your iPhone 📱':'Ready for ChromeOS 💻';
+      get('finalDesc').textContent=iphone?'Download the official AiboOS 1.8 test IPA.':'Add AiboOS to your Chromebook launcher.';
+      get('instructions').innerHTML=iphone?
+        '<strong>iPhone SE (2016) · iOS 15+</strong>. Download the unsigned IPA from GitHub Releases and open it in TrollStore on a compatible iPhone. This does not replace iOS.':
+        '<strong>ChromeOS web app</strong>. Open AiboOS in Chrome, then use the browser install prompt or Chrome menu → Cast, save and share → Install page as app (menu wording may vary). No Android APK needed.';
+      get('installButton').textContent=iphone?'Download iPhone IPA ↓':'Install ChromeOS app →';
+      get('installFeedback').hidden=true;
+    }
+  };
+  document.querySelectorAll('[data-device]').forEach(b=>b.addEventListener('click',()=>{
+    device=b.dataset.device;get('next1').disabled=false;
+    document.querySelectorAll('[data-device]').forEach(x=>{
+      const on=x===b;x.classList.toggle('chosen',on);x.setAttribute('aria-pressed',String(on));
+    });
+  }));
+  document.querySelectorAll('[data-color]').forEach(b=>b.addEventListener('click',()=>{
+    document.documentElement.style.setProperty('--accent',b.dataset.color);
+    document.querySelectorAll('[data-color]').forEach(x=>{
+      const on=x===b;x.classList.toggle('selected',on);x.setAttribute('aria-pressed',String(on));
+    });
+  }));
+  document.querySelectorAll('[data-back]').forEach(b=>b.addEventListener('click',()=>show(Number(b.dataset.back))));
+  get('next1').addEventListener('click',()=>{if(device)show(2);});
+  get('next2').addEventListener('click',()=>show(3));
+  const feedback=text=>{get('installFeedback').hidden=false;get('installFeedback').innerHTML=text;};
+  get('installButton').addEventListener('click',async()=>{
+    if(device==='iphone'){
+      feedback('Once it downloads, share the IPA to TrollStore. Do not delete your current AiboOS installation until you back up any local messages.');
+      location.href=IPA;
+      return;
+    }
+    if(matchMedia('(display-mode: standalone)').matches){
+      feedback('AiboOS already runs as an installed app. <a href="index.html">Open AiboOS</a>.');
+      return;
+    }
+    // Chromium may expose an installation event, but it is not guaranteed.
+    if(promptEvent){
+      const p=promptEvent;promptEvent=null;p.prompt();
+      try{
+        const answer=await p.userChoice;
+        feedback(answer.outcome==='accepted'?'Install requested! Open AiboOS from your Chromebook launcher.':
+          'Install cancelled. You can retry using Chrome’s ⋮ menu.');
+      }catch(e){feedback('Open <a href="index.html">AiboOS Web</a> in Chrome and choose ⋮ → Install page as app.');}
+    }else{
+      feedback('Open <a href="index.html">AiboOS Web</a> in Chrome, then choose ⋮ → Cast, save and share → Install page as app. If the option is unavailable, you can still use the web version; managed Chromebooks may block installing.');
+    }
+  });
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();promptEvent=e;});
+  if(/CrOS/i.test(navigator.userAgent))document.querySelector('[data-device="chromeos"]').click();
+  else if(/iPhone|iPad/i.test(navigator.userAgent))document.querySelector('[data-device="iphone"]').click();
+})();
+</script>
+</body>
+</html>
