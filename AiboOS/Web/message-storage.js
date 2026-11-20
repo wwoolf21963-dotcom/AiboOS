@@ -7,7 +7,7 @@
   'use strict';
   const LIMIT = Math.floor(2.5 * 1024 * 1024 * 1024);
   const encoder = new TextEncoder(), decoder = new TextDecoder();
-  let db = null, state = null, used = 0, available = false;
+  let db = null, state = null, used = 0, mediaUsed = 0, available = false;
   let writes = Promise.resolve();
   function keyFor(conv, message) {
     return conv + '/' + String(Number(message.ts) || 0).padStart(16, '0') +
@@ -129,17 +129,21 @@
       to: String(message.to || ''), name: String(message.name || '').slice(0, 48),
       text: String(message.text || ''), codec: '', packed: null,
       unread: message.unread ? 1 : 0,
-      delivery: String(message.delivery || ''), deliveryError: String(message.deliveryError || '')
+      delivery: String(message.delivery || ''), deliveryError: String(message.deliveryError || ''),
+      attachment: message.attachment ? {
+        kind:String(message.attachment.kind||''),type:String(message.attachment.type||''),
+        size:Number(message.attachment.size)||0,id:String(message.attachment.id||'')
+      } : null
     };
     if (old && old.packed && !row.text) {
       row.packed = old.packed; row.codec = old.codec;
     }
     row.bytes = sizeFor(row);
     const oldBytes = old ? (old.bytes || sizeFor(old)) : 0;
-    if (used + row.bytes - oldBytes > LIMIT * 0.9) {
+    if (used + mediaUsed + row.bytes - oldBytes > LIMIT * 0.9) {
       await compactUnread();
     }
-    if (used + row.bytes - oldBytes > LIMIT) {
+    if (used + mediaUsed + row.bytes - oldBytes > LIMIT) {
       throw Error('AiboOS message storage is full (2.5 GB policy limit)');
     }
     // A device may run out of quota before the 2.5 GB app-policy ceiling.
@@ -167,6 +171,7 @@
     }
     available = true;
     used = Math.max(0, Number(S.messageBytes) || 0);
+    mediaUsed = Math.max(0, Number(S.mediaBytes) || 0);
     const original = S.localMsgs || {};
     // Do not remove the old localStorage copy until EVERY old message has
     // committed to IndexedDB. Repeated migration is safe: keys are stable.
@@ -182,6 +187,19 @@
       console.warn('Phone message migration failed — leaving legacy backup intact', e);
       available = false;
       return false;
+    }
+    // Restore recent history and pending outbound media across app restarts.
+    // Load a bounded amount so older phones do not spend seconds booting.
+    const threads = Object.keys(S.messageThreads || {}).slice(0,35);
+    for (const other of threads) {
+      const conv=[String(S.aiboId),String(other)].sort().join('-');
+      try {
+        const rows=await recent(conv,40);
+        const cache=original[conv]=original[conv]||[];
+        const keys=new Set(cache.map(m=>m.from+'|'+m.id));
+        rows.forEach(m=>{if(!keys.has(m.from+'|'+m.id))cache.push(m);});
+        cache.sort((a,b)=>(a.ts||0)-(b.ts||0));
+      } catch(e){console.warn('Could not restore recent message cache',e);}
     }
     // Future saves store only small metadata in localStorage; bodies live in IDB.
     Object.defineProperty(S, 'localMsgs', {
@@ -229,7 +247,8 @@
       return {
         id: row.id, conv: row.conv, from: row.from, to: row.to,
         ts: row.ts, text, name: row.name, unread: !!row.unread,
-        delivery: row.delivery, deliveryError: row.deliveryError
+        delivery: row.delivery, deliveryError: row.deliveryError,
+        attachment: row.attachment || null
       };
     });
   }
@@ -253,10 +272,47 @@
       return true;
     });
   }
+  function mediaKey(message) {
+    return String(message.from||'')+':'+String(message.id||'');
+  }
+  async function mediaSave(message, blob) {
+    if (!available || !db.objectStoreNames.contains('media') ||
+        !(blob instanceof Blob) || !blob.size)
+      throw Error('Phone cannot store this attachment');
+    const key=mediaKey(message);
+    const old=await new Promise((resolve,reject)=>{
+      const request=db.transaction('media','readonly').objectStore('media').get(key);
+      request.onsuccess=()=>resolve(request.result||null);
+      request.onerror=()=>reject(request.error||Error('Media read failed'));
+    });
+    const delta=blob.size-(old?old.bytes||0:0);
+    if(used+mediaUsed+delta>LIMIT*0.9)await compactUnread();
+    if(used+mediaUsed+delta>LIMIT)throw Error('2.5 GB message/media storage limit reached');
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('media','readwrite');
+      tx.objectStore('media').put({key,blob,bytes:blob.size});
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error||Error('Could not save media to phone'));
+      tx.onabort=()=>reject(tx.error||Error('Phone media storage full'));
+    });
+    mediaUsed=Math.max(0,mediaUsed+delta);
+    state.mediaBytes=mediaUsed;
+    saveState();
+    return true;
+  }
+  function mediaGet(message) {
+    if(!available || !db.objectStoreNames.contains('media'))return Promise.resolve(null);
+    return new Promise((resolve,reject)=>{
+      const request=db.transaction('media','readonly').objectStore('media').get(mediaKey(message));
+      request.onsuccess=()=>resolve(request.result?.blob||null);
+      request.onerror=()=>reject(request.error||Error('Could not read phone attachment'));
+    });
+  }
   window.PhoneMsgStore = {
     limit: LIMIT, get ready() { return available; },
-    get bytes() { return used; }, init: initialize, persist,
+    get bytes() { return used+mediaUsed; }, init: initialize, persist,
     has, recent, markRead, compactUnread: () => enqueue(compactUnread),
-    rememberThread, pack, unpack
+    mediaSave: (message, blob) => enqueue(() => mediaSave(message,blob)),
+    mediaGet, rememberThread, pack, unpack
   };
 })();
