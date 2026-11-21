@@ -3,6 +3,7 @@
 # Does not access an actual iPhone.
 set -euo pipefail
 UPSTREAM="49fb794cde1f73cc7a00b502a42b994926c64c63"
+python3 -m py_compile windows-pongo-stage1/patch-upstream.py
 git clone --quiet https://github.com/palera1n/openra1n.git upstream-openra1n
 git -C upstream-openra1n checkout --quiet "$UPSTREAM"
 test "$(git -C upstream-openra1n rev-parse HEAD)" = "$UPSTREAM"

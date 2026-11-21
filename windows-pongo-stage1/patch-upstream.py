@@ -65,7 +65,8 @@ fail:
 }
 
 '''
-if(!reset_old.includes("dfu_set_state_wait_reset(handle)")||!reset_old.includes("DFU_FILE_SUFFIX_LEN")||!reset_old.includes("EP0_MAX_PACKET_SZ"))throw Error("unexpected upstream reset");
+if not all(marker in reset_old for marker in ("dfu_set_state_wait_reset(handle)", "DFU_FILE_SUFFIX_LEN", "EP0_MAX_PACKET_SZ")):
+    raise SystemExit("Upstream DFU reset function changed; refusing to patch")
 text = text[:reset_start] + reset_new + text[reset_end:]
 
 start = text.index("static bool checkm8_stage_setup(")
