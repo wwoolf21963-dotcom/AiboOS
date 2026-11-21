@@ -16,7 +16,10 @@ internal static class Program
             try
             {
                 string path = ImageWriter.Create(folder, null);
-                return File.Exists(path) && new FileInfo(path).Length == ImageWriter.ImageSize ? 0 : 1;
+                var devices = UsbMonitor.Parse("1227|WinUSB\n1227|WinUSB\n4141|libusbK\ninvalid");
+                bool usbPass = devices.Count(UsbMonitor.Dfu) == 2 && devices.Count(UsbMonitor.Pongo) == 1
+                    && UsbMonitor.KnownDriver(devices[0]) && !UsbMonitor.KnownDriver(new UsbDevice("1227", "Apple"));
+                return File.Exists(path) && new FileInfo(path).Length == ImageWriter.ImageSize && usbPass ? 0 : 1;
             }
             catch { return 1; }
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
@@ -75,58 +78,175 @@ internal static class ImageWriter
     }
 }
 
+internal sealed record UsbDevice(string Pid, string Driver);
+
+internal static class UsbMonitor
+{
+    internal static bool Dfu(UsbDevice d) => d.Pid == "1227";
+    internal static bool Pongo(UsbDevice d) => d.Pid == "4141";
+    internal static bool KnownDriver(UsbDevice d) =>
+        new[] { "WinUSB", "libusbK", "libusb0" }.Contains(d.Driver, StringComparer.OrdinalIgnoreCase);
+    internal static UsbDevice[] Parse(string output) => output.Split('\n')
+        .Select(s => s.Trim().Split('|'))
+        .Where(a => a.Length == 2 && a[0].Length == 4 && a[0].All(Uri.IsHexDigit))
+        .Select(a => new UsbDevice(a[0].ToUpperInvariant(), a[1])).ToArray();
+
+    internal static async Task<UsbDevice[]> Scan()
+    {
+        const string query = @"$ErrorActionPreference = 'Stop'
+Get-CimInstance Win32_PnPEntity | Where-Object {
+    $_.Present -eq $true -and $_.PNPDeviceID -match '^USB\\VID_05AC&PID_[0-9A-F]{4}\\'
+} | ForEach-Object {
+    if ($_.PNPDeviceID -match 'VID_05AC&PID_([0-9A-F]{4})') {
+        $devicePid = $Matches[1].ToUpperInvariant()
+        $driver = ([string]$_.Service) -replace '[^a-zA-Z0-9_-]', ''
+        Write-Output ""$devicePid|$driver""
+    }
+}";
+        var info = new ProcessStartInfo("powershell.exe") {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (string arg in new[] { "-NoProfile", "-NonInteractive", "-Command", query })
+            info.ArgumentList.Add(arg);
+        using var proc = Process.Start(info) ?? throw new IOException("Unable to scan Windows USB devices.");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var output = proc.StandardOutput.ReadToEndAsync(timeout.Token);
+        var errors = proc.StandardError.ReadToEndAsync(timeout.Token);
+        try { await proc.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException)
+        {
+            if (!proc.HasExited) proc.Kill(true);
+            throw new TimeoutException("USB scan timed out.");
+        }
+        string stdout = await output;
+        string stderr = await errors;
+        if (proc.ExitCode != 0) throw new IOException("USB scan failed: " + stderr.Trim());
+        return Parse(stdout);
+    }
+}
+
 internal sealed class Setup : Form
 {
-    readonly Button build = new() { Text = "Prepare AiboOS system image", Width = 460, Height = 52 };
-    readonly Button open = new() { Text = "Open image folder", Width = 460, Height = 42, Enabled = false };
-    readonly ProgressBar progress = new() { Width = 460, Height = 22 };
-    readonly Label state = new() { Text = "Ready to extract the embedded ARM64 operating system.", Width = 460, Height = 70 };
+    readonly Button build = new() { Text = "Prepare AiboOS system image", Width = 620, Height = 48 };
+    readonly Button open = new() { Text = "Open image folder", Width = 300, Height = 38, Enabled = false };
+    readonly Button scan = new() { Text = "Refresh USB status", Width = 300, Height = 38 };
+    readonly ProgressBar progress = new() { Width = 620, Height = 20 };
+    readonly Label state = new() { Text = "Connect your iPhone with a Lightning data cable.", Width = 620, Height = 54 };
+    readonly Label[] steps = new Label[7];
+    readonly System.Windows.Forms.Timer timer = new() { Interval = 10000 };
+    readonly Color green = Color.FromArgb(150, 240, 185);
+    readonly Color amber = Color.FromArgb(255, 207, 143);
     string? result;
+    bool scanning, busy;
     internal Setup()
     {
-        Text = "AiboOS — OS image preparation";
-        ClientSize = new Size(540, 460);
+        Text = "AiboOS Setup — iPhone SE development";
+        ClientSize = new Size(720, 760);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(26, 19, 39);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 11);
+        AutoScaleMode = AutoScaleMode.Dpi;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(34, 20, 34, 20) };
-        panel.Controls.Add(new Label { Text = "AiboOS", Font = new Font("Segoe UI", 30, FontStyle.Bold), ForeColor = Color.HotPink, Width = 460, Height = 65 });
-        panel.Controls.Add(new Label { Text = "ARM64 system image • Development build", Width = 460, Height = 34 });
-        panel.Controls.Add(new Label { Text = "Creates a verified 256 MiB Linux filesystem image on this PC. iPhone SE permanent installation is not implemented. No phone or physical disk is written.", Width = 460, Height = 85 });
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(34, 16, 34, 16), AutoScroll = true };
+        panel.Controls.Add(new Label { Text = "♡ AiboOS Setup", Font = new Font("Segoe UI", 28, FontStyle.Bold), ForeColor = Color.HotPink, Width = 620, Height = 58 });
+        panel.Controls.Add(new Label { Text = "iPhone SE (2016)  •  A9  •  Development build", Width = 620, Height = 32 });
+        string[] labels = {
+            "USB connection", "DFU mode", "Windows DFU driver binding",
+            "PongoOS USB detection", "AiboOS system image",
+            "Native AiboOS boot", "Permanent installation / restart"
+        };
+        for (int i = 0; i < labels.Length; i++)
+        {
+            var row = new Panel { Width = 620, Height = 42, BackColor = Color.FromArgb(45, 33, 62), Margin = new Padding(0, 3, 0, 3) };
+            steps[i] = new Label { Text = "○  " + labels[i], ForeColor = amber, Dock = DockStyle.Fill, Padding = new Padding(12, 8, 8, 2), AutoEllipsis = true };
+            row.Controls.Add(steps[i]);
+            panel.Controls.Add(row);
+        }
+        SetStep(4, "AiboOS system image — ready to verify", false);
+        SetStep(5, "Native AiboOS boot — not verified", false);
+        SetStep(6, "Permanent installation — not implemented", false);
         build.BackColor = Color.FromArgb(240, 143, 194);
         build.ForeColor = Color.Black;
         build.FlatStyle = FlatStyle.Flat;
         open.ForeColor = Color.Black;
+        scan.ForeColor = Color.Black;
         panel.Controls.Add(build);
         panel.Controls.Add(progress);
         panel.Controls.Add(state);
-        panel.Controls.Add(open);
+        var buttons = new FlowLayoutPanel { Width = 620, Height = 48, WrapContents = false };
+        buttons.Controls.Add(scan);
+        buttons.Controls.Add(open);
+        panel.Controls.Add(buttons);
         Controls.Add(panel);
+        Shown += async (_, _) => { await RefreshUsb(); if (!IsDisposed) timer.Start(); };
+        timer.Tick += async (_, _) => await RefreshUsb();
+        scan.Click += async (_, _) => await RefreshUsb();
         build.Click += async (_, _) =>
         {
+            busy = true;
             build.Enabled = false;
             open.Enabled = false;
             progress.Value = 0;
-            state.Text = "Extracting and verifying AiboOS...";
+            result = null;
+            SetStep(4, "AiboOS system image — verifying…", false);
+            state.Text = "Extracting and verifying the embedded operating system.";
             try
             {
                 string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AiboOS", "Images", Guid.NewGuid().ToString("N"));
                 var report = new Progress<int>(p => progress.Value = Math.Clamp(p, 0, 100));
                 result = await Task.Run(() => ImageWriter.Create(folder, report));
-                state.Text = "Image verified and saved. Your iPhone has not been changed.";
+                SetStep(4, "AiboOS system image — verified and saved", true);
+                state.Text = "Image ready on this PC. Phone storage has not been changed.";
                 open.Enabled = true;
             }
-            catch (Exception ex) { state.Text = "Image preparation failed: " + ex.Message; }
-            finally { build.Enabled = true; }
+            catch (Exception ex)
+            {
+                SetStep(4, "AiboOS system image — verification failed", false);
+                state.Text = ex.Message;
+            }
+            finally { busy = false; build.Enabled = true; }
         };
-        FormClosing += (_, e) => { if (!build.Enabled) e.Cancel = true; };
         open.Click += (_, _) =>
         {
             if (result != null)
                 Process.Start(new ProcessStartInfo { FileName = Path.GetDirectoryName(result)!, UseShellExecute = true });
         };
+        FormClosing += (_, e) => { if (busy) e.Cancel = true; };
+        FormClosed += (_, _) => timer.Dispose();
+    }
+
+    private void SetStep(int index, string message, bool passed)
+    {
+        steps[index].Text = (passed ? "✓  " : "○  ") + message;
+        steps[index].ForeColor = passed ? green : amber;
+    }
+
+    private async Task RefreshUsb()
+    {
+        if (scanning || IsDisposed) return;
+        scanning = true;
+        scan.Enabled = false;
+        try
+        {
+            var devices = await UsbMonitor.Scan();
+            if (IsDisposed) return;
+            var dfu = devices.Where(UsbMonitor.Dfu).ToArray();
+            var pongo = devices.Where(UsbMonitor.Pongo).ToArray();
+            SetStep(0, devices.Length > 0 ? "Apple USB device detected" : "USB connection — waiting for Apple device", devices.Length > 0);
+            SetStep(1, dfu.Length == 1 ? "DFU mode — detected" : dfu.Length > 1 ? "DFU mode — multiple devices" : "DFU mode — not currently detected", dfu.Length == 1);
+            bool binding = dfu.Length == 1 && UsbMonitor.KnownDriver(dfu[0]);
+            SetStep(2, binding ? "DFU driver binding — " + dfu[0].Driver + " (access untested)" : "DFU driver binding — not confirmed", binding);
+            SetStep(3, pongo.Length == 1 ? "PongoOS USB ID — detected (boot unverified)" : "PongoOS USB ID — not detected", pongo.Length == 1);
+        }
+        catch (Exception ex)
+        {
+            if (IsDisposed) return;
+            for (int i = 0; i < 4; i++) SetStep(i, "USB check unavailable — refresh to retry", false);
+            if (!busy) state.Text = ex.Message;
+        }
+        finally { scanning = false; if (!IsDisposed) scan.Enabled = true; }
     }
 }
