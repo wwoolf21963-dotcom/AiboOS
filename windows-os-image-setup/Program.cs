@@ -172,7 +172,7 @@ internal sealed class Setup : Form
     bool scanning, busy, driverBusy, offeredDriver, driverMissing;
     internal Setup()
     {
-        Text = "AiboOS Setup — iPhone SE development";
+        Text = "AiboOS™ Setup — iPhone SE development";
         ClientSize = new Size(720, 800);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(26, 19, 39);
@@ -182,7 +182,7 @@ internal sealed class Setup : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(34, 16, 34, 16), AutoScroll = true };
-        panel.Controls.Add(new Label { Text = "♡ AiboOS Setup", Font = new Font("Segoe UI", 28, FontStyle.Bold), ForeColor = Color.HotPink, Width = 620, Height = 58 });
+        panel.Controls.Add(new Label { Text = "♡ AiboOS™ Setup", Font = new Font("Segoe UI", 28, FontStyle.Bold), ForeColor = Color.HotPink, Width = 620, Height = 58 });
         panel.Controls.Add(new Label { Text = "iPhone SE (2016)  •  A9  •  Development build", Width = 620, Height = 32 });
         string[] labels = {
             "USB connection", "DFU mode", "Windows DFU driver binding",

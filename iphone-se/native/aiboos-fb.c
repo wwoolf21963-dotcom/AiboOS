@@ -98,6 +98,7 @@ static void render(struct screen *s) {
     rect(s,0,0,w,h/4,0x503058);
     rect(s,0,h/4-6,w,6,0xff8fbd);
     text(s,24,25,"AIBOOS",5,0xff91c1);
+    text(s,206,25,"TM",2,0xff91c1);
     text(s,24,90,"NATIVE LINUX",k,0xffffff);
     text(s,24,h/3,"IPHONE SE 2016",k,0xffffff);
     text(s,24,h/3+45,"A9 RAM BOOT",k,0xffc2df);
@@ -112,7 +113,7 @@ static int navigate(int page, const struct input_event *ev) {
     switch (ev->code) {
         case KEY_VOLUMEUP: case KEY_UP: return (page + 1) % PAGE_COUNT;
         case KEY_VOLUMEDOWN: case KEY_DOWN: return (page + PAGE_COUNT - 1) % PAGE_COUNT;
-        case KEY_HOME: return PAGE_HOME;
+        case KEY_HOME: case KEY_HOMEPAGE: return PAGE_HOME;
         default: return page;
     }
 }
@@ -122,7 +123,9 @@ static void shell_page(struct screen *s, int page) {
     rect(s,0,0,w,h,0x191328);
     rect(s,0,0,w,h/5,0x503058);
     rect(s,0,h/5-4,w,4,0xff91c1);
-    text(s,16,18,"AIBOOS",w>=400?5:3,0xff91c1);
+    int brand_scale=w>=400?5:3;
+    text(s,16,18,"AIBOOS",brand_scale,0xff91c1);
+    text(s,18+36*brand_scale,18,"TM",2,0xff91c1);
     const char *titles[]={"HOME","CONNECTION","SYSTEM"};
     const char *lines[][3]={
         {"NATIVE LINUX","VOLUME KEYS TO MOVE","HOME TO RETURN"},

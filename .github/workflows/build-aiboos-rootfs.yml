@@ -71,7 +71,7 @@ jobs:
           cat > "$FS/etc/os-release" <<'EOF'
           NAME=AiboOS
           ID=aiboos
-          PRETTY_NAME="AiboOS ARM64 Development System"
+          PRETTY_NAME="AiboOS™ ARM64 Development System"
           VERSION_ID="0.1"
           EOF
           printf 'aiboos\n' > "$FS/etc/hostname"
