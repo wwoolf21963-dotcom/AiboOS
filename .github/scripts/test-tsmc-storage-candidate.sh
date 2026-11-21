@@ -44,11 +44,41 @@ assert "apple,n69" in get(candidate,"/","compatible").split()
 assert "apple,n69u" in get(samsung,"/","compatible").split()
 assert len(get(candidate,pcie,"iommu-map","x").split())==8
 assert [n for n in walk(candidate,pcie) if "/pci@" in n]==[pcie+"/pci@0,0"]
-for p in ["reg","interrupts","power-domains","reg-names","apple,nvme-hmb"]:
+# DTC allocates phandles independently for each compilation. Compare reference
+# targets and argument cells instead of treating generated IDs as hardware data.
+def phandles(f):
+    result={}
+    for node in walk(f):
+        proc=subprocess.run(["fdtget","-t","x",f,node,"phandle"],text=True,capture_output=True)
+        if proc.returncode == 0:
+            value=int(proc.stdout.strip(),16)
+            assert value not in result
+            result[value]=node
+    return result
+
+def refs(f, node, prop, handles, count_property=None):
+    cells=[int(x,16) for x in get(f,node,prop,"x").split()]
+    result=[]
+    while cells:
+        target=handles[cells.pop(0)]
+        count=int(get(f,target,count_property,"x"),16) if count_property else 0
+        assert len(cells)>=count
+        result.append((target,tuple(cells[:count])))
+        del cells[:count]
+    return result
+
+orig_handles=phandles(original)
+test_handles=phandles(candidate)
+for p in ["reg","interrupts","reg-names"]:
     t="s" if p=="reg-names" else "x"
     assert get(original,pcie,p,t)==get(candidate,pcie,p,t),p
-for p in ["reg","reset-gpios","num-lanes","max-link-speed"]:
+for p,count in [("power-domains","#power-domain-cells"),("apple,nvme-hmb",None)]:
+    assert refs(original,pcie,p,orig_handles,count)==refs(candidate,pcie,p,test_handles,count),p
+for p in ["reg","num-lanes","max-link-speed"]:
     assert get(original,pcie+"/pci@0,0",p,"x")==get(candidate,pcie+"/pci@0,0",p,"x"),p
+assert refs(original,pcie+"/pci@0,0","reset-gpios",orig_handles,"#gpio-cells")==refs(candidate,pcie+"/pci@0,0","reset-gpios",test_handles,"#gpio-cells"),"reset-gpios"
+cells=[int(x,16) for x in get(candidate,pcie,"iommu-map","x").split()]
+assert test_handles[cells[1]]==dart0 and cells[0]==0x100 and cells[2:]==[0,0,0x80000000,0,0x3c000000,1],"storage IOMMU mapping"
 report="PASS: TSMC storage-only device-tree candidate compiles; Samsung original unchanged; upstream resource layout preserved; only DART0 and storage port enabled. No hardware test. NVMe HMB reserved memory and boot support remain unresolved."
 print(report)
 (pathlib.Path(out)/"result.txt").write_text(report+"\n")
