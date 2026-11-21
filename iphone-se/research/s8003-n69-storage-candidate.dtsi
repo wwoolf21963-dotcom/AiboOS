@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0+ OR MIT
+/*
+ * AiboOS TSMC iPhone SE storage-port candidate, NOT hardware validated.
+ * Include after upstream s8003-n69.dts for a separate developer-only DTB.
+ * Public Apple n69 restore hardware data (19H422) confirms port0 reset
+ * GPIO 160, DART0 register/interrupt/window and NVMMU resources.
+ * Reuse upstream S8003 implementation; no Samsung or Wi-Fi changes.
+ * NVMe HMB reservation is still the responsibility of a supported loader.
+ * This is not a flash image and must not be included in release packages.
+ */
+&pcie0_dart0 {
+	status = "okay";
+};
+
+&pcie0 {
+	/* Only the storage port; retain the upstream port0 description. */
+	iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>;
+	status = "okay";
+};

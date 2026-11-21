@@ -1,0 +1,26 @@
+name: Compile TSMC SE storage port candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iphone-se/research/s8003-n69-storage-candidate.dtsi'
+      - '.github/scripts/test-tsmc-storage-candidate.sh'
+      - '.github/workflows/test-tsmc-storage-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm device-tree-compiler flex bison bc libssl-dev libelf-dev libncurses-dev rsync
+      - run: bash .github/scripts/test-tsmc-storage-candidate.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TSMC-SE-Storage-Port-SOURCE-REVIEW-ONLY
+          path: tsmc-storage-review/
+          if-no-files-found: error
