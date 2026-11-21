@@ -36,6 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           bash windows-pongo-stage1/build-stage1.sh
+      - name: Confirm A9 fail-fast changes are present in upstream build
+        shell: msys2 {0}
+        run: |
+          grep -Fq 'Heap-spray setup did not succeed within 1200 USB attempts' upstream-openra1n/checkm8.c
+          grep -Fq 'aborting without automatic exploit retry' upstream-openra1n/checkm8.c
+          grep -Fq 'A9 spray stage did not succeed within 1200 attempts' upstream-openra1n/checkm8.c
       - name: Validate EXE on Windows runner
         shell: pwsh
         run: |

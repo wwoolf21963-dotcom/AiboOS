@@ -7,6 +7,7 @@ git clone --quiet https://github.com/palera1n/openra1n.git upstream-openra1n
 git -C upstream-openra1n checkout --quiet "$UPSTREAM"
 test "$(git -C upstream-openra1n rev-parse HEAD)" = "$UPSTREAM"
 cd upstream-openra1n
+python3 ../windows-pongo-stage1/patch-upstream.py
 mkdir -p include/payloads ../dist/native-first-stage
 python3 - <<'PY'
 from pathlib import Path

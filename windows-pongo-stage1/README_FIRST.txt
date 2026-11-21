@@ -61,3 +61,13 @@ libusbK. If access fails, it stops and points to Zadig for MANUAL approval.
 It does not silently switch system recovery drivers. No exploits, WSL,
 Windows restarts, iOS modifications, internal-storage flashing, or boot.
 Driver installation and replacement need careful review of VID 05AC PID 1227.
+
+
+FAIL-FAST FIRST-STAGE RESEARCH PATCH
+------------------------------------
+This Windows build patches the pinned upstream checkm8 to limit the A9
+heap-spray setup and spray loops to at most 1200 attempts each. It also
+stops after a failed stage instead of automatically repeating exploits.
+These are bounded attempt counts, NOT a hard time limit or proof of safety.
+If the tool reports an A9 setup/spray failure, do NOT keep rerunning it;
+share the diagnostic log. It has NOT been verified against the real phone.
