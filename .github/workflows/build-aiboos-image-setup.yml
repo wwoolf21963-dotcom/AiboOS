@@ -24,6 +24,12 @@ jobs:
           run-id: 44932594002
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: rootfs-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-Windows-DFU-Driver-Preparation-NOT-iOS-Replacement
+          run-id: 44931020238
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: driver-artifact
       - name: Embed verified native filesystem
         shell: python
         run: |
@@ -54,9 +60,17 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Image setup self-test failed: $($p.ExitCode)" }
           Get-FileHash $exe -Algorithm SHA256
+      - name: Include existing reviewed driver helper
+        shell: pwsh
+        run: |
+          Copy-Item windows-linux-boot-assistant/Prepare-DFU-Driver.ps1 setup-output/
+          Copy-Item driver-artifact/AiboOS-DFU-Driver-Tool.exe setup-output/
+          Copy-Item driver-artifact/LIBWDI-*.txt setup-output/
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File setup-output/Prepare-DFU-Driver.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Driver helper self-test failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: AiboOS-Windows-OS-Image-Setup-NOT-iPhone-Installer
-          path: setup-output/AiboOS-Image-Setup.exe
+          path: setup-output/
           if-no-files-found: error
           retention-days: 30

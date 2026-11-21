@@ -131,6 +131,7 @@ internal sealed class Setup : Form
     readonly Button build = new() { Text = "Prepare AiboOS system image", Width = 620, Height = 48 };
     readonly Button open = new() { Text = "Open image folder", Width = 300, Height = 38, Enabled = false };
     readonly Button scan = new() { Text = "Refresh USB status", Width = 300, Height = 38 };
+    readonly Button driver = new() { Text = "Prepare missing Windows USB driver", Width = 620, Height = 38, Enabled = false };
     readonly ProgressBar progress = new() { Width = 620, Height = 20 };
     readonly Label state = new() { Text = "Connect your iPhone with a Lightning data cable.", Width = 620, Height = 54 };
     readonly Label[] steps = new Label[7];
@@ -138,11 +139,11 @@ internal sealed class Setup : Form
     readonly Color green = Color.FromArgb(150, 240, 185);
     readonly Color amber = Color.FromArgb(255, 207, 143);
     string? result;
-    bool scanning, busy;
+    bool scanning, busy, driverBusy, offeredDriver, driverMissing;
     internal Setup()
     {
         Text = "AiboOS Setup — iPhone SE development";
-        ClientSize = new Size(720, 760);
+        ClientSize = new Size(720, 800);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(26, 19, 39);
         ForeColor = Color.White;
@@ -173,6 +174,8 @@ internal sealed class Setup : Form
         build.FlatStyle = FlatStyle.Flat;
         open.ForeColor = Color.Black;
         scan.ForeColor = Color.Black;
+        driver.ForeColor = Color.Black;
+        panel.Controls.Add(driver);
         panel.Controls.Add(build);
         panel.Controls.Add(progress);
         panel.Controls.Add(state);
@@ -184,9 +187,11 @@ internal sealed class Setup : Form
         Shown += async (_, _) => { await RefreshUsb(); if (!IsDisposed) timer.Start(); };
         timer.Tick += async (_, _) => await RefreshUsb();
         scan.Click += async (_, _) => await RefreshUsb();
+        driver.Click += async (_, _) => await PrepareDriver();
         build.Click += async (_, _) =>
         {
             busy = true;
+            driver.Enabled = false;
             build.Enabled = false;
             open.Enabled = false;
             progress.Value = 0;
@@ -207,14 +212,14 @@ internal sealed class Setup : Form
                 SetStep(4, "AiboOS system image — verification failed", false);
                 state.Text = ex.Message;
             }
-            finally { busy = false; build.Enabled = true; }
+            finally { busy = false; build.Enabled = true; await RefreshUsb(); }
         };
         open.Click += (_, _) =>
         {
             if (result != null)
                 Process.Start(new ProcessStartInfo { FileName = Path.GetDirectoryName(result)!, UseShellExecute = true });
         };
-        FormClosing += (_, e) => { if (busy) e.Cancel = true; };
+        FormClosing += (_, e) => { if (busy || driverBusy) e.Cancel = true; };
         FormClosed += (_, _) => timer.Dispose();
     }
 
@@ -226,9 +231,11 @@ internal sealed class Setup : Form
 
     private async Task RefreshUsb()
     {
-        if (scanning || IsDisposed) return;
+        if (scanning || driverBusy || busy || IsDisposed) return;
         scanning = true;
+        driver.Enabled = false;
         scan.Enabled = false;
+        driverMissing = false;
         try
         {
             var devices = await UsbMonitor.Scan();
@@ -238,6 +245,8 @@ internal sealed class Setup : Form
             SetStep(0, devices.Length > 0 ? "Apple USB device detected" : "USB connection — waiting for Apple device", devices.Length > 0);
             SetStep(1, dfu.Length == 1 ? "DFU mode — detected" : dfu.Length > 1 ? "DFU mode — multiple devices" : "DFU mode — not currently detected", dfu.Length == 1);
             bool binding = dfu.Length == 1 && UsbMonitor.KnownDriver(dfu[0]);
+            driverMissing = dfu.Length == 1 && !binding;
+            if (dfu.Length == 0) offeredDriver = false;
             SetStep(2, binding ? "DFU driver binding — " + dfu[0].Driver + " (access untested)" : "DFU driver binding — not confirmed", binding);
             SetStep(3, pongo.Length == 1 ? "PongoOS USB ID — detected (boot unverified)" : "PongoOS USB ID — not detected", pongo.Length == 1);
         }
@@ -247,6 +256,46 @@ internal sealed class Setup : Form
             for (int i = 0; i < 4; i++) SetStep(i, "USB check unavailable — refresh to retry", false);
             if (!busy) state.Text = ex.Message;
         }
-        finally { scanning = false; if (!IsDisposed) scan.Enabled = true; }
+        finally
+        {
+            scanning = false;
+            if (!IsDisposed) { scan.Enabled = true; driver.Enabled = driverMissing && !busy; }
+        }
+        if (!IsDisposed && driverMissing && !offeredDriver && !busy)
+        {
+            offeredDriver = true;
+            await PrepareDriver();
+        }
+    }
+
+    private async Task PrepareDriver()
+    {
+        if (busy || scanning || driverBusy || !driverMissing || IsDisposed) return;
+        driverBusy = true;
+        timer.Stop();
+        driver.Enabled = scan.Enabled = build.Enabled = false;
+        try
+        {
+            if (MessageBox.Show(this, "A compatible Windows DFU driver is missing. Prepare it now? The helper checks the connected device and backs up the original Apple driver when required. Windows may request administrator approval. This changes a Windows driver, not phone storage.", "AiboOS USB driver", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+            string folder = AppContext.BaseDirectory;
+            string script = Path.Combine(folder, "Prepare-DFU-Driver.ps1");
+            if (!File.Exists(script) || !File.Exists(Path.Combine(folder, "AiboOS-DFU-Driver-Tool.exe")))
+                throw new IOException("Driver files missing. Extract the entire setup ZIP.");
+            state.Text = "Preparing Windows USB driver. Check the Windows approval prompt.";
+            var info = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe")) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (string arg in new[] { "-NoProfile", "-File", script }) info.ArgumentList.Add(arg);
+            using var proc = Process.Start(info) ?? throw new IOException("Unable to start driver preparation.");
+            await proc.WaitForExitAsync();
+            state.Text = proc.ExitCode == 0 ? "Driver helper completed. Rechecking Windows device binding." : "Driver preparation stopped (code " + proc.ExitCode + "). See the AiboOS driver log.";
+        }
+        catch (Exception ex) { state.Text = ex.Message; }
+        finally
+        {
+            driverBusy = false;
+            build.Enabled = scan.Enabled = true;
+            await RefreshUsb();
+            if (!IsDisposed) timer.Start();
+        }
     }
 }

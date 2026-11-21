@@ -27,7 +27,7 @@ function Log([string]$message) {
 function PresentDfu {
   return @(Get-CimInstance -ClassName Win32_PnPEntity |
     Where-Object {
-      $_.PNPDeviceID -match '(^|\\)VID_05AC&PID_1227($|[&\\])' -and $_.Present -ne $false
+      $_.PNPDeviceID -match '(^|\\)VID_05AC&PID_1227($|[&\\])' -and $_.Present -eq $true
     })
 }
 function DriverRecord([string]$id) {
