@@ -16,7 +16,7 @@ function Say([string]$message, [ConsoleColor]$color = [ConsoleColor]::Gray) {
 }
 function Is-Admin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 function Has-Backup {
