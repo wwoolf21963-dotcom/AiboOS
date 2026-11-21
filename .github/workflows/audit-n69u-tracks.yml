@@ -1,0 +1,41 @@
+name: Parallel Samsung hardware compatibility audits
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iphone-se/research/audit-n69u-tracks.py'
+      - '.github/workflows/audit-n69u-tracks.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    name: Audit ${{ matrix.track }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        track: [storage, charging, display-touch, audio-haptics, connectivity, sensors-thermal, touch-id]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-Orchard-A9-Kernel-Evaluation-NOT-INSTALLER
+          run-id: 44959323202
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: kernel
+      - name: Verify source artifact and audit Samsung board
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler
+          (cd kernel && sha256sum -c SHA256SUMS.txt)
+          python3 iphone-se/research/audit-n69u-tracks.py kernel/apple-dtbs/s8000-n69u.dtb kernel/kernel.config "${{ matrix.track }}" reports/"${{ matrix.track }}".json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: N69U-${{ matrix.track }}-STATIC-AUDIT
+          path: reports/
+          if-no-files-found: error
