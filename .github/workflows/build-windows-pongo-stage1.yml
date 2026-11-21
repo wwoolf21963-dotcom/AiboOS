@@ -39,6 +39,8 @@ jobs:
       - name: Confirm A9 fail-fast changes are present in upstream build
         shell: msys2 {0}
         run: |
+          grep -Fq 'Configuration 1 already active; skipping set_configuration' upstream-openra1n/usb_libusb.c
+          grep -Fq 'after 120 checks' upstream-openra1n/usb_libusb.c
           grep -Fq 'A9 DFU reset: failed DFU manifest state transition.' upstream-openra1n/checkm8.c
           grep -Fq 'Heap-spray setup did not succeed within 1200 USB attempts' upstream-openra1n/checkm8.c
           grep -Fq 'aborting without automatic exploit retry' upstream-openra1n/checkm8.c

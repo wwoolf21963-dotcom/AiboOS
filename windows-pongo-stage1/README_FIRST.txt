@@ -71,3 +71,12 @@ stops after a failed stage instead of automatically repeating exploits.
 These are bounded attempt counts, NOT a hard time limit or proof of safety.
 If the tool reports an A9 setup/spray failure, do NOT keep rerunning it;
 share the diagnostic log. It has NOT been verified against the real phone.
+
+
+WINDOWS USB WAIT DIAGNOSTICS
+----------------------------
+The experimental first-stage program checks whether USB configuration 1 is
+already active, avoiding an unnecessary libusb_set_configuration request.
+It stops after a limited number of USB checks and prints an error rather
+than waiting indefinitely. This fix has NOT been tested on real iPhone.
+Do not repeatedly run the exploit if the new report indicates a failure.

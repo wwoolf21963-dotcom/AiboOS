@@ -4,11 +4,13 @@
 set -euo pipefail
 UPSTREAM="49fb794cde1f73cc7a00b502a42b994926c64c63"
 python3 -m py_compile windows-pongo-stage1/patch-upstream.py
+python3 -m py_compile windows-pongo-stage1/patch-usb.py
 git clone --quiet https://github.com/palera1n/openra1n.git upstream-openra1n
 git -C upstream-openra1n checkout --quiet "$UPSTREAM"
 test "$(git -C upstream-openra1n rev-parse HEAD)" = "$UPSTREAM"
 cd upstream-openra1n
 python3 ../windows-pongo-stage1/patch-upstream.py
+python3 ../windows-pongo-stage1/patch-usb.py
 mkdir -p include/payloads ../dist/native-first-stage
 python3 - <<'PY'
 from pathlib import Path
