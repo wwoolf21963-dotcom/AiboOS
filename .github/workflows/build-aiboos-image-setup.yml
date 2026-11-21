@@ -1,0 +1,62 @@
+name: Build AiboOS Windows OS Image Setup
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-aiboos-image-setup.yml'
+      - 'windows-os-image-setup/**'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  setup:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          run-id: 44932594002
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: rootfs-artifact
+      - name: Embed verified native filesystem
+        shell: python
+        run: |
+          import gzip, hashlib, lzma, pathlib
+          source = pathlib.Path("rootfs-artifact/AiboOS-ARM64-rootfs.ext4.xz")
+          expected = pathlib.Path("rootfs-artifact/SHA256SUMS.txt").read_text().split()[0]
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == expected
+          out = pathlib.Path("windows-os-image-setup")
+          digest = hashlib.sha256()
+          count = 0
+          with lzma.open(source, "rb") as src, gzip.open(out / "payload.gz", "wb", compresslevel=6) as dest:
+              while chunk := src.read(1024 * 1024):
+                  count += len(chunk)
+                  assert count <= 256 * 1024 * 1024
+                  digest.update(chunk)
+                  dest.write(chunk)
+          assert count == 256 * 1024 * 1024
+          (out / "payload.sha256").write_text(digest.hexdigest())
+      - name: Publish standalone Windows executable
+        shell: pwsh
+        run: |
+          dotnet publish windows-os-image-setup/AiboOS.ImageSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o setup-output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test complete image extraction and verification
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path setup-output/AiboOS-Image-Setup.exe
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Image setup self-test failed: $($p.ExitCode)" }
+          Get-FileHash $exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Windows-OS-Image-Setup-NOT-iPhone-Installer
+          path: setup-output/AiboOS-Image-Setup.exe
+          if-no-files-found: error
+          retention-days: 30

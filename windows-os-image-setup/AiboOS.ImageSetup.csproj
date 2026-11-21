@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AiboOS-Image-Setup</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="payload.gz" LogicalName="AiboOS.RootFS.gz" />
+    <EmbeddedResource Include="payload.sha256" LogicalName="AiboOS.RootFS.sha256" />
+  </ItemGroup>
+</Project>
