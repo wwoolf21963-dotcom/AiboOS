@@ -1,0 +1,50 @@
+name: Build AiboOS iPhone SE ARM64 Dev Kit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-iphone-se-arm64.yml'
+      - '.github/scripts/build-iphone-se-arm64.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aiboos-iphone-se-arm64
+  cancel-in-progress: true
+
+jobs:
+  build-arm64:
+    name: Compile experimental A9 Linux kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Get AiboOS sources
+        uses: actions/checkout@v4
+      - name: Validate build script and web assets
+        run: |
+          bash -n .github/scripts/build-iphone-se-arm64.sh
+          test -f AiboOS/Web/index.html
+      - name: Install cross-compilation prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl build-essential clang lld llvm flex bison bc \
+            libssl-dev libelf-dev libncurses-dev device-tree-compiler \
+            dwarves zstd xz-utils python3 rsync cpio
+      - name: Build Hoolock ARM64 kernel and package AiboOS UI source
+        run: bash .github/scripts/build-iphone-se-arm64.sh
+      - name: Verify outputs
+        run: |
+          test -s iphone-se-artifact/Image.gz
+          test -s iphone-se-artifact/READ_ME_FIRST.txt
+          test -s iphone-se-artifact/SHA256SUMS.txt
+          (cd iphone-se-artifact && sha256sum -c SHA256SUMS.txt)
+      - name: Upload ARM64 development kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-ARM64-development-kit
+          path: iphone-se-artifact/
+          if-no-files-found: error
+          retention-days: 30
