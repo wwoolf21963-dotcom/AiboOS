@@ -24,6 +24,7 @@
 #define MINIMP3_NO_SIMD
 #define MINIMP3_IMPLEMENTATION
 #include "vendor/minimp3.h"
+#include "aiboos-power.h"
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -115,7 +116,7 @@ static void render(struct screen *s) {
 }
 /* Volume keys work through the ordinary Linux evdev interface. A real
  * touchscreen driver can later provide navigation through the same UI. */
-enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_COUNT };
+enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_POWER, PAGE_SECURITY, PAGE_COUNT };
 enum { ACTION_SILENT, ACTION_DIM, ACTION_HOME, ACTION_OFF, ACTION_COUNT };
 enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_MP3, TONE_COUNT };
 struct switch_ui { int page, action, sound, position, silent, toast; long long until; };
@@ -205,13 +206,20 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
     int brand_scale=w>=400?5:3;
     text(s,16,18,"AIBOOS",brand_scale,0xff91c1);
     text(s,18+36*brand_scale,18,"TM",2,0xff91c1);
-    const char *titles[]={"HOME","CONNECTION","SYSTEM","SWITCH SETTINGS","SWITCH SOUND"};
+    struct aiboos_power p={.capacity=-1};
+    if(page==PAGE_POWER)p=power_sample("/sys");
+    char battery[40]="BATTERY UNAVAILABLE",temp[40]="TEMP UNKNOWN";
+    if(p.capacity>=0)snprintf(battery,sizeof(battery),"BATTERY %d PERCENT",p.capacity);
+    if(p.temp_valid)snprintf(temp,sizeof(temp),"TEMP %d DECIC",p.temp_decic);
+    const char *titles[]={"HOME","CONNECTION","SYSTEM","SWITCH SETTINGS","SWITCH SOUND","BATTERY","SECURITY"};
     const char *lines[][3]={
         {"NATIVE LINUX","VOLUME KEYS TO MOVE",u->silent?"SILENT ON":u->position<0?"SWITCH UNKNOWN":"SILENT OFF"},
         {"USB SERIAL","WIFI NOT VERIFIED","TOUCH NOT REQUIRED"},
         {"ARM64 A9","DEVELOPMENT BUILD","NO RAW DISK WRITES"},
         {actions[u->action],"HOME TO CHANGE","VOLUME TO NAVIGATE"},
-        {sounds[u->sound],"HOME TO CHANGE",u->sound==TONE_MP3?"LOCAL MP3 FILE":"VOLUME TO NAVIGATE"}
+        {sounds[u->sound],"HOME TO CHANGE",u->sound==TONE_MP3?"LOCAL MP3 FILE":"VOLUME TO NAVIGATE"},
+        {battery,power_status(p),temp},
+        {"TOUCH ID UNSUPPORTED","HOME BUTTON ONLY","NO BIOMETRIC ENROLLMENT"}
     };
     text(s,16,h/5+14,titles[page],page>=PAGE_SETTINGS?k:k+1,0xffffff);
     int a=h/5+48,step=(h-a-38)/4;if(step<18)step=18;
@@ -219,7 +227,7 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
         rect(s,12,a+i*step,w-24,step-3,bg==0x08060c?0x15101c:0x332440);
         text(s,20,a+i*step+5,lines[page][i],w>=600?3:2,0xffc2df);
     }
-    for(int i=0;i<PAGE_COUNT;i++)rect(s,w/2-43+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
+    for(int i=0;i<PAGE_COUNT;i++)rect(s,w/2-(PAGE_COUNT*18)/2+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
     island(s,u);
 }
 /* Small local tone synthesizer. Playback is optional native ALSA PCM.
@@ -375,6 +383,7 @@ static int run_ui(struct screen *s) {
             int ready=poll(inputs,count,250);
             if(ready<0&&errno!=EINTR)break;
             if(u.toast&&now_ms()>=u.until){u.toast=0;shell_page(s,&u);}
+            if(u.page==PAGE_POWER&&tick%8==0)shell_page(s,&u);
             if(sound_child>0&&waitpid(sound_child,NULL,WNOHANG)!=0)sound_child=0;
             for(unsigned i=0;i<count;i++)if(inputs[i].revents&POLLIN){
                 struct input_event ev;
@@ -419,7 +428,7 @@ static int selftest(void) {
     ev.value=2;
     if(navigate(PAGE_CONNECTION,&ev)!=PAGE_CONNECTION) return 5;
     ev.value=1;ev.code=KEY_VOLUMEDOWN;
-    if(navigate(PAGE_HOME,&ev)!=PAGE_SOUND) return 6;
+    if(navigate(PAGE_HOME,&ev)!=PAGE_SECURITY) return 6;
     ev.code=KEY_HOME;
     if(navigate(PAGE_SYSTEM,&ev)!=PAGE_HOME) return 7;
     struct switch_ui u={.position=-1,.action=ACTION_SILENT,.sound=TONE_CLICK};
@@ -441,6 +450,11 @@ static int selftest(void) {
 }
 int main(int argc, char **argv) {
     if (argc==2 && !strcmp(argv[1],"--selftest")) return selftest();
+    if(argc==3&&!strcmp(argv[1],"--test-power")){
+        struct aiboos_power p=power_sample(argv[2]);
+        printf("battery=%d capacity=%d temp_valid=%d temp_decic=%d status=%s\n",p.battery,p.capacity,p.temp_valid,p.temp_decic,power_status(p));
+        return 0;
+    }
     if (argc==3 && !strcmp(argv[1],"--test-mp3")) {
         int16_t pcm[96000*2];
         unsigned n=decode_mp3(argv[2],pcm,96000);

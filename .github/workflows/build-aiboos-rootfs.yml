@@ -64,6 +64,17 @@ jobs:
           ln -s ../bin/busybox "$FS/sbin/init"
           aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o "$FS/bin/aiboos-fb"
           qemu-aarch64-static "$FS/bin/aiboos-fb" --selftest
+          FIX="$TMP/power-fixture/class/power_supply/battery"
+          mkdir -p "$FIX" "$TMP/power-empty"
+          printf 'Battery\n' > "$FIX/type"
+          printf '61\n' > "$FIX/capacity"
+          printf 'Charging\n' > "$FIX/status"
+          printf '320\n' > "$FIX/temp"
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --test-power "$TMP/power-fixture" | grep -Fx 'battery=1 capacity=61 temp_valid=1 temp_decic=320 status=CHARGING'
+          printf '999\n' > "$FIX/capacity"
+          printf 'broken\n' > "$FIX/temp"
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --test-power "$TMP/power-fixture" | grep -F 'capacity=-1 temp_valid=0'
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --test-power "$TMP/power-empty" | grep -F 'battery=0 capacity=-1 temp_valid=0'
           mkdir -p "$FS/var/lib/aiboos/sounds"
           ffmpeg -v error -f lavfi -i 'sine=frequency=880:duration=0.35' -ar 44100 -ac 1 -c:a libmp3lame "$TMP/mono.mp3"
           ffmpeg -v error -f lavfi -i 'sine=frequency=440:duration=2.5' -ar 48000 -ac 2 -c:a libmp3lame "$TMP/stereo.mp3"
