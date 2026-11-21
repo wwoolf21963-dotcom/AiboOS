@@ -1,0 +1,52 @@
+name: Validate Samsung SE storage resource definitions
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iphone-se/research/s8000-resource-map.py'
+      - '.github/workflows/test-s8000-storage.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  samsung:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-A9-SE-Controller-Comparison
+          run-id: 44959323214
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: public-adt
+      - name: Build inactive Samsung hardware resource map
+        run: |
+          mkdir -p samsung-storage-review
+          python3 iphone-se/research/s8000-resource-map.py public-adt/controller-comparison.json samsung-storage-review/s8000-n69u-storage.dtsi
+      - name: Compile against original Samsung SE device tree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm flex bison bc device-tree-compiler libssl-dev libelf-dev libncurses-dev rsync
+          git init "$RUNNER_TEMP/linux"
+          git -C "$RUNNER_TEMP/linux" remote add origin https://github.com/OrchardLinux/linux.git
+          git -C "$RUNNER_TEMP/linux" fetch --depth=1 origin ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1
+          git -C "$RUNNER_TEMP/linux" checkout --detach FETCH_HEAD
+          K="$RUNNER_TEMP/linux"
+          make -C "$K" ARCH=arm64 LLVM=1 orchard_apple16k_defconfig
+          DIR="$K/arch/arm64/boot/dts/apple"
+          cat samsung-storage-review/s8000-n69u-storage.dtsi >> "$DIR/s8000-n69u.dts"
+          make -C "$K" ARCH=arm64 LLVM=1 apple/s8000-n69u.dtb
+          F="$DIR/s8000-n69u.dtb"
+          fdtget -t s "$F" / compatible | grep -w apple,n69u
+          test "$(fdtget -t s "$F" /soc/pcie@610000000 compatible)" = apple,s8000-pcie
+          test "$(fdtget -t s "$F" /soc/pcie@610000000 status)" = disabled
+          test "$(fdtget -t s "$F" /soc/iommu@601008000 status)" = disabled
+          test "$(fdtget -t s "$F" /soc/pcie@610000000 reg-names)" = "config rc phy port0 port1 port2 port3 nvmmu"
+          echo "PASS Samsung metadata matches compiled inactive DTS; PHY initialization and hardware tests remain unimplemented." | tee samsung-storage-review/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-S8000-Storage-Resource-Source-Review
+          path: samsung-storage-review/
+          if-no-files-found: error
