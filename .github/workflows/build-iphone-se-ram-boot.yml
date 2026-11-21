@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            make cpio gzip xz-utils file python3 curl device-tree-compiler e2fsprogs
+            make cpio gzip xz-utils file python3 curl device-tree-compiler e2fsprogs qemu-user-static
       - name: Build m1n1 and RAM-only experimental boot payload
         run: bash .github/scripts/build-iphone-se-ram-boot.sh
       - name: Validate RAM boot experiment

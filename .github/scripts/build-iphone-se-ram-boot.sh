@@ -60,6 +60,8 @@ sh -n "$TMP/initramfs/bin/aiboos-usb-serial"
 sh "$TMP/initramfs/bin/aiboos-usb-serial" --selftest
 install -m 755 "$ROOT/iphone-se/native/aiboos-install.sh" "$TMP/initramfs/bin/aiboos-install"
 sh -n "$TMP/initramfs/bin/aiboos-install"
+install -m 755 "$ROOT/iphone-se/native/aiboos-root-start.sh" "$TMP/initramfs/bin/aiboos-root-start"
+sh -n "$TMP/initramfs/bin/aiboos-root-start"
 mkdir -p "$TMP/initramfs/opt/aiboos/install" "$TMP/install-root"
 (cd "$ROOT/install-rootfs" && sha256sum -c SHA256SUMS.txt)
 xz -dc "$ROOT/install-rootfs/AiboOS-ARM64-rootfs.ext4.xz" > "$TMP/install.ext4"
@@ -84,6 +86,18 @@ sed "s|^bundle=/opt/aiboos/install$|bundle=$TMP/initramfs/opt/aiboos/install|" "
 sudo sh "$TMP/install-ci.sh" --install "$testvol"
 sudo test -x "$testvol/AiboOS/bin/busybox"
 sudo grep -qx ID=aiboos "$testvol/AiboOS/etc/os-release"
+sudo sh "$TMP/initramfs/bin/aiboos-root-start" --verify "$testvol/AiboOS"
+# Execute installed ARM64 binaries on the disposable volume, not build-tree copies.
+sudo qemu-aarch64-static "$testvol/AiboOS/bin/busybox" true
+sudo qemu-aarch64-static "$testvol/AiboOS/bin/aiboos-fb" --selftest
+# Corruption must be detected before a root handoff.
+printf '\n' | sudo tee -a "$testvol/AiboOS/etc/os-release" >/dev/null
+if sudo sh "$TMP/initramfs/bin/aiboos-root-start" --verify "$testvol/AiboOS"; then
+  echo "Corruption detection failed"; exit 1
+fi
+if sudo sh "$TMP/initramfs/bin/aiboos-root-start" --boot-mounted "$testvol"; then
+  echo "Non-PID1 root handoff refusal failed"; exit 1
+fi
 if sudo sh "$TMP/install-ci.sh" --install "$testvol"; then echo "Overwrite refusal test failed"; exit 1; fi
 sudo umount "$testvol"
 trap - EXIT
@@ -104,6 +118,7 @@ echo 'Web UI files are bundled but no web runtime is installed.'
 cat /run/aiboos-storage.log
 echo 'Phone-side Linux volume installation command: aiboos-install --install /mnt/aiboos'
 echo 'Requires a dedicated, prepared ext4 mount; never formats or writes raw storage.'
+echo 'Installed filesystem can be verified with aiboos-root-start --verify /mnt/aiboos/AiboOS.'
 echo 'Native A9 internal storage support is unverified; no permanent installation attempted.'
 exec /bin/busybox sh </dev/console >/dev/console 2>&1
 INIT

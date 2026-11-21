@@ -50,8 +50,11 @@ echo "Installing AiboOS Linux userspace onto the prepared volume..."
 tar -xzf "$bundle/rootfs.tar.gz" -C "$stage" || fail "Extraction failed; incomplete data left in staging directory."
 [ -x "$stage/bin/busybox" ] && [ -L "$stage/sbin/init" ] || fail "Installed root filesystem verification failed."
 grep -qx 'ID=aiboos' "$stage/etc/os-release" || fail "Unexpected installed system identity."
+# Record immutable startup payload checksums, without hashing runtime state.
+(cd "$stage" && sha256sum bin/busybox bin/aiboos-fb bin/aiboos-usb-serial etc/os-release etc/inittab etc/init.d/rcS > .aiboos-system-sha256)
+printf '%s\n' AIBOOS-ROOT-V1 > "$stage/.aiboos-installed"
 sync
 mv "$stage" "$target/AiboOS"
 sync
 echo "SUCCESS: AiboOS root filesystem installed at $target/AiboOS."
-echo "Bootloader and automatic startup are not installed. iOS has not been replaced."
+echo "Installed root is ready for standard Linux root handoff. Firmware startup is not installed; iOS has not been replaced."

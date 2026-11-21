@@ -50,3 +50,7 @@ The new RAM image includes `/bin/aiboos-install` and a checksum-verified archive
 The native framebuffer now draws a superscript-style TM beside AIBOOS. Windows Setup and the root filesystem display AiboOS™. The Home button mapping also accepts KEY_HOMEPAGE, as declared in Hoolock's s800x-se.dtsi.
 
 Source audit: Hoolock's config_16k already enables NVME_APPLE, APPLE_RTKIT and EXT4_FS. Its A9 s800-0-3.dtsi, s800-0-3-common.dtsi and s800x-se.dtsi do not declare an A9 storage controller. The A9 feature matrix does not document internal storage support. Enabling the existing NVMe configuration alone is therefore not evidence of a usable A9 block device. No speculative controller addresses or write operations were added.
+
+## Installed Linux root verification and handoff
+
+Deployment now records SHA-256 checksums for the installed immutable startup payload and an installation marker. `aiboos-root-start --verify` checks init, the system identity, virtual filesystem mountpoints and payload hashes. A separate `--boot-mounted` mode implements a standard Linux PID 1 switch_root from an already booted RAM Linux system, on an explicitly prepared and mounted ext4 volume; it refuses non-PID1 invocation. It is not wired to automatic boot or an iPhone firmware path. CI verifies the installed tree, executes its ARM64 BusyBox and framebuffer binary under QEMU user emulation, checks corruption rejection, and checks non-PID1 refusal. Real switch_root execution on a phone remains untested. No A9 storage controller or phone boot transport is added.
