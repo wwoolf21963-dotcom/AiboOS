@@ -1,4 +1,4 @@
-name: Build AiboOS Windows Auto Readiness
+name: Build AiboOS Windows DFU Readiness
 
 on:
   workflow_dispatch:
@@ -21,27 +21,27 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Validate iPhone model and iOS version routing
+      - name: Validate DFU mode and A9 profile routing
         shell: pwsh
         run: |
           dotnet run --project windows-linux-boot-assistant/tests/DeviceProfileTests.csproj -c Release
-          if ($LASTEXITCODE -ne 0) { throw "Device/iOS routing tests failed" }
+          if ($LASTEXITCODE -ne 0) { throw "DFU routing tests failed" }
       - name: Compile Windows x64 self-contained GUI
         shell: pwsh
         run: |
           dotnet publish windows-linux-boot-assistant/AiboOS-Setup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:DebugType=None -o dist/aiboos-windows
           if ($LASTEXITCODE -ne 0) { throw "Windows executable build failed" }
-      - name: Verify packaged portable GUI and instructions
+      - name: Verify packaged GUI and instructions
         shell: pwsh
         run: |
           if (-not (Test-Path dist/aiboos-windows/AiboOS-Setup.exe)) { throw "Missing Windows application" }
           if ((Get-Item dist/aiboos-windows/AiboOS-Setup.exe).Length -lt 1000000) { throw "Invalid executable" }
           Copy-Item windows-linux-boot-assistant/README_FIRST.txt dist/aiboos-windows/README_FIRST.txt
           Get-FileHash dist/aiboos-windows/AiboOS-Setup.exe -Algorithm SHA256 | Format-List
-      - name: Publish Windows GUI - NOT an iOS installer
+      - name: Publish DFU readiness GUI — NOT an iOS replacement
         uses: actions/upload-artifact@v4
         with:
-          name: AiboOS-Windows-Auto-Readiness-NOT-iOS-Installer
+          name: AiboOS-Windows-DFU-Readiness-NOT-iOS-Replacement
           path: dist/aiboos-windows/
           retention-days: 30
           if-no-files-found: error

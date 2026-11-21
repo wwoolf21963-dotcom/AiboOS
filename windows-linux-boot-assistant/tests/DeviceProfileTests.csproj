@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../DeviceProfiles.cs" />
+    <Compile Include="../UsbModes.cs" />
     <Compile Include="DeviceProfileTests.cs" />
   </ItemGroup>
 </Project>
