@@ -41,14 +41,14 @@ internal sealed class SetupWindow : Form
     private const string UsbQuery = @"
 $ErrorActionPreference = 'Stop'
 Get-CimInstance -ClassName Win32_PnPEntity |
-  Where-Object { $_.PNPDeviceID -match 'VID_05AC&PID_[0-9A-F]{4}' } |
+  Where-Object { $_.Present -eq $true -and $_.PNPDeviceID -match '^USB\\VID_05AC&PID_[0-9A-F]{4}\\' } |
   ForEach-Object {
     if ($_.PNPDeviceID -match 'VID_05AC&PID_([0-9A-F]{4})') {
       $detectedId = $Matches[1].ToUpperInvariant()
       $driverService = ([string]$_.Service) -replace '[^a-zA-Z0-9_-]', ''
       Write-Output ""$detectedId|$driverService""
     }
-  } | Sort-Object -Unique
+  }
 ";
     private readonly Label connectionStatus = new();
     private readonly Label connectionDetails = new();
@@ -64,6 +64,8 @@ Get-CimInstance -ClassName Win32_PnPEntity |
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "AiboOS", "setup-profile.json");
     private bool scanning;
+    private bool preparingDriver;
+    private string driverDiagnostic = "";
     private List<(string Id, string Driver)> usbDevices = new();
     private string diagnostic = "No USB scan completed.";
 
@@ -261,13 +263,13 @@ Get-CimInstance -ClassName Win32_PnPEntity |
             StringComparison.OrdinalIgnoreCase));
         bool profileMatches = DeviceProfiles.TryGetLinuxRoute(
             modelChoice.SelectedItem?.ToString(), iosChoice.Text, out _);
-        prepareDriver.Enabled = !scanning && dfuCount == 1 && profileMatches;
+        prepareDriver.Enabled = !scanning && !preparingDriver && dfuCount == 1 && profileMatches;
     }
 
     private async Task PrepareDriverAsync()
     {
         // This is intentionally separate from automatic read-only DFU detection.
-        if (scanning || usbDevices.Count(x => string.Equals(x.Id, "1227", StringComparison.OrdinalIgnoreCase)) != 1 ||
+        if (scanning || preparingDriver || usbDevices.Count(x => string.Equals(x.Id, "1227", StringComparison.OrdinalIgnoreCase)) != 1 ||
             !DeviceProfiles.TryGetLinuxRoute(
                 modelChoice.SelectedItem?.ToString(), iosChoice.Text, out _))
         {
@@ -291,8 +293,11 @@ Get-CimInstance -ClassName Win32_PnPEntity |
                 "AiboOS", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
+        preparingDriver = true;
         prepareDriver.Enabled = false;
         rescan.Enabled = false;
+        modelChoice.Enabled = false;
+        iosChoice.Enabled = false;
         refresh.Stop();
         connectionStatus.Text = "Preparing Windows DFU driver…";
         connectionDetails.Text = "Windows may request administrator approval. No phone firmware is being changed.";
@@ -332,8 +337,8 @@ Get-CimInstance -ClassName Win32_PnPEntity |
                 "AiboOS", "Driver-Setup-Last-Run.txt");
             string log = File.Exists(logPath)
                 ? File.ReadAllText(logPath) : result.Item2;
-            diagnostic = "AiboOS DFU driver setup\n" + log + "\n" + diagnostic;
-            await ScanAsync();
+            driverDiagnostic = "AiboOS DFU driver setup\n" + log;
+            diagnostic = driverDiagnostic + "\n\n" + diagnostic;
             MessageBox.Show(
                 (result.ExitCode == 0
                     ? "DFU driver preparation completed.\n\n"
@@ -350,6 +355,10 @@ Get-CimInstance -ClassName Win32_PnPEntity |
         }
         finally
         {
+            preparingDriver = false;
+            modelChoice.Enabled = true;
+            iosChoice.Enabled = true;
+            await ScanAsync();
             refresh.Start();
             rescan.Enabled = true;
             UpdateDriverButton();
@@ -358,8 +367,9 @@ Get-CimInstance -ClassName Win32_PnPEntity |
 
     private async Task ScanAsync()
     {
-        if (scanning || IsDisposed) return;
+        if (scanning || preparingDriver || IsDisposed) return;
         scanning = true;
+        UpdateDriverButton();
         rescan.Enabled = false;
         connectionStatus.ForeColor = White;
         connectionStatus.Text = "Scanning Windows USB devices…";
@@ -398,6 +408,8 @@ Get-CimInstance -ClassName Win32_PnPEntity |
         }
         finally
         {
+            if (driverDiagnostic.Length > 0)
+                diagnostic += "\n\nLast driver preparation report:\n" + driverDiagnostic;
             UpdateSafetyStatus();
             scanning = false;
             if (!IsDisposed) rescan.Enabled = true;
@@ -444,7 +456,7 @@ Get-CimInstance -ClassName Win32_PnPEntity |
                     && driver.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '-'))
                     found.Add((id, driver));
             }
-            return found.Distinct().ToList();
+            return found;
         }
         catch (OperationCanceledException)
         {
