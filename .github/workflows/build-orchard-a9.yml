@@ -1,0 +1,38 @@
+name: Build AiboOS OrchardLinux A9 kernel evaluation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-orchard-a9.yml'
+      - '.github/scripts/build-orchard-a9.sh'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  rootfs:
+    uses: ./.github/workflows/build-aiboos-rootfs.yml
+  kernel:
+    needs: rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          path: current-rootfs
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git build-essential clang lld llvm flex bison bc libssl-dev libelf-dev libncurses-dev device-tree-compiler dwarves zstd xz-utils python3 rsync cpio
+      - name: Compile and audit OrchardLinux A9
+        run: |
+          bash -n .github/scripts/build-orchard-a9.sh
+          bash .github/scripts/build-orchard-a9.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Orchard-A9-Kernel-Evaluation-NOT-INSTALLER
+          path: orchard-a9-artifact/
+          if-no-files-found: error
+          retention-days: 30
