@@ -98,8 +98,11 @@ jobs:
           sudo e2fsck -fn "$IMG"
           debugfs -R 'cat /etc/os-release' "$IMG" | grep 'ID=aiboos'
           debugfs -R 'stat /sbin/init' "$IMG" | grep 'Type: symlink'
-          debugfs -R 'dump /bin/aiboos-fb /tmp/aiboos-fb-image-check' "$IMG"
-          qemu-aarch64-static /tmp/aiboos-fb-image-check --selftest
+          debugfs -R "dump /bin/aiboos-fb $TMP/aiboos-fb-image-check" "$IMG"
+          test -s "$TMP/aiboos-fb-image-check"
+          cmp "$FS/bin/aiboos-fb" "$TMP/aiboos-fb-image-check"
+          chmod 755 "$TMP/aiboos-fb-image-check"
+          qemu-aarch64-static "$TMP/aiboos-fb-image-check" --selftest
           xz -T0 -6 "$IMG"
           xz -t "$IMG.xz"
           cat > "$OUT/READ_ME.txt" <<'EOF'
