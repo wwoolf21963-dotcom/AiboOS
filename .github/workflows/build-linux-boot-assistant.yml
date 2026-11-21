@@ -1,0 +1,42 @@
+name: Build AiboOS Windows Linux Boot Assistant
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-linux-boot-assistant.yml'
+      - 'windows-linux-boot-assistant/**'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-assistant:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Compile Windows x64 self-contained GUI
+        shell: pwsh
+        run: |
+          dotnet publish windows-linux-boot-assistant/AiboOS-Setup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:DebugType=None -o dist/aiboos-windows
+          if ($LASTEXITCODE -ne 0) { throw "Windows executable build failed" }
+      - name: Verify packaged portable GUI and instructions
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/aiboos-windows/AiboOS-Setup.exe)) { throw "Missing Windows application" }
+          if ((Get-Item dist/aiboos-windows/AiboOS-Setup.exe).Length -lt 1000000) { throw "Invalid executable" }
+          Copy-Item windows-linux-boot-assistant/README_FIRST.txt dist/aiboos-windows/README_FIRST.txt
+          Get-FileHash dist/aiboos-windows/AiboOS-Setup.exe -Algorithm SHA256 | Format-List
+      - name: Publish Windows GUI - NOT an iOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Windows-Linux-Boot-Assistant-NOT-iOS-Replacement
+          path: dist/aiboos-windows/
+          retention-days: 30
+          if-no-files-found: error
