@@ -1,0 +1,121 @@
+name: Build AiboOS ARM64 Persistent Root Filesystem
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-aiboos-rootfs.yml'
+      - 'iphone-se/native/**'
+      - 'AiboOS/Web/**'
+permissions:
+  contents: read
+jobs:
+  rootfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and filesystem tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu e2fsprogs qemu-user-static xz-utils
+      - name: Build native ARM64 persistent filesystem image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD"
+          TMP="$RUNNER_TEMP/aiboos-rootfs"
+          FS="$TMP/root"
+          OUT="$ROOT/aiboos-rootfs-artifact"
+          mkdir -p "$TMP/unpacked" "$OUT" "$FS"/{bin,sbin,dev,proc,sys,run,tmp,etc/init.d,var/lib/aiboos,opt/aiboos/web,root}
+          python3 - "$TMP" <<'PY'
+          import hashlib
+          import lzma
+          import pathlib
+          import sys
+          from urllib.request import urlopen
+          root = pathlib.Path(sys.argv[1])
+          base = "https://deb.debian.org/debian/"
+          with urlopen(base + "dists/trixie/main/binary-arm64/Packages.xz", timeout=120) as resp:
+              packages = lzma.decompress(resp.read()).decode()
+          item = None
+          for stanza in packages.split("\n\n"):
+              if stanza.startswith("Package: busybox-static\n"):
+                  item = dict(line.split(": ", 1) for line in stanza.splitlines() if ": " in line)
+                  break
+          if not item:
+              raise SystemExit("Debian ARM64 busybox-static package missing")
+          with urlopen(base + item["Filename"], timeout=120) as resp:
+              data = resp.read()
+          if hashlib.sha256(data).hexdigest() != item["SHA256"]:
+              raise SystemExit("ARM64 BusyBox checksum mismatch")
+          (root / "busybox-static-arm64.deb").write_bytes(data)
+          print("Verified ARM64 static BusyBox", item["Version"])
+          PY
+          dpkg-deb -x "$TMP/busybox-static-arm64.deb" "$TMP/unpacked"
+          BB="$(find "$TMP/unpacked" -type f -name busybox -print -quit)"
+          test -n "$BB"
+          install -m 755 "$BB" "$FS/bin/busybox"
+          qemu-aarch64-static "$FS/bin/busybox" true
+          for app in sh mount mkdir hostname cat echo ls sync reboot poweroff; do
+            ln -s busybox "$FS/bin/$app"
+          done
+          ln -s ../bin/busybox "$FS/sbin/init"
+          aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o "$FS/bin/aiboos-fb"
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --selftest
+          cp -a AiboOS/Web/. "$FS/opt/aiboos/web/"
+          cat > "$FS/etc/os-release" <<'EOF'
+          NAME=AiboOS
+          ID=aiboos
+          PRETTY_NAME="AiboOS ARM64 Development System"
+          VERSION_ID="0.1"
+          EOF
+          printf 'aiboos\n' > "$FS/etc/hostname"
+          cat > "$FS/etc/inittab" <<'EOF'
+          ::sysinit:/etc/init.d/rcS
+          ::askfirst:/bin/sh
+          ::shutdown:/bin/sync
+          EOF
+          cat > "$FS/etc/init.d/rcS" <<'EOF'
+          #!/bin/sh
+          export PATH=/bin:/sbin
+          mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+          mount -t proc proc /proc 2>/dev/null || true
+          mount -t sysfs sysfs /sys 2>/dev/null || true
+          mount -t tmpfs -o mode=755 tmpfs /run 2>/dev/null || true
+          hostname aiboos
+          echo "AiboOS ARM64 development system"
+          /bin/aiboos-fb --show || echo "Framebuffer unavailable"
+          EOF
+          chmod 755 "$FS/etc/init.d/rcS"
+          chmod 1777 "$FS/tmp"
+          sudo mknod -m 600 "$FS/dev/console" c 5 1
+          sudo mknod -m 666 "$FS/dev/null" c 1 3
+          sudo chown -hR root:root "$FS"
+          IMG="$OUT/AiboOS-ARM64-rootfs.ext4"
+          truncate -s 256M "$IMG"
+          sudo mke2fs -q -t ext4 -F -L AIBOOS_ROOT -d "$FS" "$IMG"
+          sudo e2fsck -fn "$IMG"
+          debugfs -R 'cat /etc/os-release' "$IMG" | grep 'ID=aiboos'
+          debugfs -R 'stat /sbin/init' "$IMG" | grep 'Type: symlink'
+          debugfs -R 'dump /bin/aiboos-fb /tmp/aiboos-fb-image-check' "$IMG"
+          qemu-aarch64-static /tmp/aiboos-fb-image-check --selftest
+          xz -T0 -6 "$IMG"
+          xz -t "$IMG.xz"
+          cat > "$OUT/READ_ME.txt" <<'EOF'
+          AiboOS persistent ARM64 Linux root filesystem (development image).
+          Includes BusyBox init, native framebuffer component, local console,
+          AiboOS web assets, and a writable ext4 filesystem for future supported
+          Linux targets. The web assets do not yet have a native browser runtime.
+          ARM64 user-space binaries and filesystem integrity are tested in CI.
+          This is not an iPhone flash image, bootloader, or replacement installer.
+          No A9 device storage access or permanent boot has been verified.
+          Do not write this image to the iPhone or to an existing physical disk.
+          EOF
+          (cd "$OUT" && sha256sum AiboOS-ARM64-rootfs.ext4.xz > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          path: aiboos-rootfs-artifact/
+          if-no-files-found: error
+          retention-days: 30
