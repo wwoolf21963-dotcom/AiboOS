@@ -1,4 +1,4 @@
-name: Build AiboOS Windows OS Image Setup
+name: Build AiboOS Windows OrchardLinux Development Setup
 on:
   workflow_dispatch:
   push:
@@ -6,16 +6,11 @@ on:
     paths:
       - '.github/workflows/build-aiboos-image-setup.yml'
       - 'windows-os-image-setup/**'
-      - 'iphone-se/native/**'
-      - '.github/workflows/build-aiboos-rootfs.yml'
 permissions:
   contents: read
   actions: read
 jobs:
-  rootfs:
-    uses: ./.github/workflows/build-aiboos-rootfs.yml
   setup:
-    needs: rootfs
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -26,11 +21,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          run-id: 44956140341
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: rootfs-artifact
       - uses: actions/download-artifact@v4
         with:
-          name: AiboOS-iPhone-SE-ARM64-development-kit
-          run-id: 44906030345
+          name: AiboOS-Orchard-A9-Kernel-Evaluation-NOT-INSTALLER
+          run-id: 44954815188
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: kernel-artifact
       - uses: actions/download-artifact@v4
@@ -39,6 +36,12 @@ jobs:
           run-id: 44931020238
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: driver-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-VM-Installation-Lifecycle-Report
+          run-id: 44956140341
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: lifecycle-report
       - name: Embed verified native filesystem
         shell: python
         run: |
@@ -68,7 +71,11 @@ jobs:
               checksum, name = line.split(maxsplit=1)
               expected[name.lstrip("*")] = checksum.lower()
           names = ["Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb"]
-          for name in names:
+          metadata = ["kernel-commit.txt", "kernel.config", "HARDWARE-REPORT.txt"]
+          assert (root / "kernel-commit.txt").read_text().strip() == "ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1"
+          report = pathlib.Path("lifecycle-report/result.txt").read_text()
+          assert "PASS: guest installation, shutdown, restart, installed init and persistence" in report
+          for name in names + metadata:
               data = (root / name).read_bytes()
               assert data and hashlib.sha256(data).hexdigest() == expected[name], name
           with gzip.open(root / "Image.gz", "rb") as source:
@@ -80,11 +87,15 @@ jobs:
           with zipfile.ZipFile(out / "native-files.zip", "w", zipfile.ZIP_DEFLATED) as z:
               for name in names:
                   z.write(root / name, name)
-              z.write(root / "kernel-commit.txt", "kernel-commit.txt")
+              for name in metadata:
+                  z.write(root / name, name)
+              for name in ["result.txt", "install.log", "restart.log", "filesystem-check.log"]:
+                  z.write(pathlib.Path("lifecycle-report") / name, "vm-test/" + name)
+              z.writestr("PROVENANCE.txt", "OrchardLinux kernel run 44954815188, artifact 14727845168. ARM64 rootfs run 44956140341, artifact 14727860939. VM lifecycle report from same rootfs run, artifact 14727802487. VM kernel is a different configuration; no physical iPhone test.\n")
               z.writestr("SHA256SUMS.txt", "".join(expected[name] + "  " + name + "\n" for name in names))
-              for name in ["aiboos-fb.c", "aiboos-usb-serial.sh", "README.md"]:
+              for name in ["aiboos-fb.c", "aiboos-usb-serial.sh", "aiboos-install.sh", "aiboos-root-start.sh", "vendor/minimp3.h", "README.md", "A9-STORAGE-PORTING.md"]:
                   z.write(pathlib.Path("iphone-se/native") / name, "source/" + name)
-              z.writestr("README.txt", "AiboOS native development files. Kernel from verified earlier build; updated userspace is in the separately embedded filesystem. The kernel and userspace have not been tested together on an iPhone. No phone-flashing or permanent boot mechanism included.\n")
+              z.writestr("README.txt", "AiboOS OrchardLinux development files. The pinned root filesystem passed a full ARM64 virtual-machine installation lifecycle using a virtual kernel. The SE kernel has not been boot-tested on the phone. No phone-flashing or permanent boot mechanism included.\n")
           with zipfile.ZipFile(out / "native-files.zip") as z:
               assert z.testzip() is None
           (out / "native-files.sha256").write_text(hashlib.sha256((out / "native-files.zip").read_bytes()).hexdigest())
@@ -110,7 +121,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Driver helper self-test failed" }
       - uses: actions/upload-artifact@v4
         with:
-          name: AiboOS-Windows-OS-Image-Setup-NOT-iPhone-Installer
+          name: AiboOS-OrchardLinux-Windows-Development-Setup-NOT-iPhone-Installer
           path: setup-output/
           if-no-files-found: error
           retention-days: 30

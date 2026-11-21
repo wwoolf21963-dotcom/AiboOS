@@ -21,7 +21,7 @@ internal static class Program
                     && UsbMonitor.KnownDriver(devices[0]) && !UsbMonitor.KnownDriver(new UsbDevice("1227", "Apple"));
                 using var native = ZipFile.OpenRead(Path.Combine(folder, "AiboOS-Native-Linux.zip"));
                 bool nativePass = new[] { "Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb",
-                    "source/aiboos-fb.c", "source/aiboos-usb-serial.sh" }.All(name => native.GetEntry(name)?.Length > 0);
+                    "source/aiboos-fb.c", "source/aiboos-usb-serial.sh", "source/aiboos-install.sh", "source/aiboos-root-start.sh", "kernel.config", "HARDWARE-REPORT.txt", "vm-test/result.txt", "PROVENANCE.txt" }.All(name => native.GetEntry(name)?.Length > 0);
                 return File.Exists(path) && new FileInfo(path).Length == ImageWriter.ImageSize && usbPass && nativePass ? 0 : 1;
             }
             catch { return 1; }
@@ -172,7 +172,7 @@ internal sealed class Setup : Form
     bool scanning, busy, driverBusy, offeredDriver, driverMissing;
     internal Setup()
     {
-        Text = "AiboOS™ Setup — iPhone SE development";
+        Text = "AiboOS™ Setup — OrchardLinux A9 development";
         ClientSize = new Size(720, 800);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(26, 19, 39);
@@ -183,7 +183,7 @@ internal sealed class Setup : Form
         MaximizeBox = false;
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(34, 16, 34, 16), AutoScroll = true };
         panel.Controls.Add(new Label { Text = "♡ AiboOS™ Setup", Font = new Font("Segoe UI", 28, FontStyle.Bold), ForeColor = Color.HotPink, Width = 620, Height = 58 });
-        panel.Controls.Add(new Label { Text = "iPhone SE (2016)  •  A9  •  Development build", Width = 620, Height = 32 });
+        panel.Controls.Add(new Label { Text = "iPhone SE (2016)  •  OrchardLinux  •  Development", Width = 620, Height = 32 });
         string[] labels = {
             "USB connection", "DFU mode", "Windows DFU driver binding",
             "PongoOS USB detection", "AiboOS system image",
@@ -234,7 +234,7 @@ internal sealed class Setup : Form
                 var report = new Progress<int>(p => progress.Value = Math.Clamp(p, 0, 100));
                 result = await Task.Run(() => ImageWriter.Create(folder, report));
                 SetStep(4, "ARM64 system image + native files — verified", true);
-                state.Text = "ARM64 image and native Linux bundle saved together. Phone storage unchanged.";
+                state.Text = "OrchardLinux kernel and tested ARM64 filesystem saved on PC. Phone storage unchanged.";
                 open.Enabled = true;
             }
             catch (Exception ex)
