@@ -49,12 +49,20 @@ jobs:
           if (-not $l0 -or -not $lk) { throw "Missing libwdi build dependencies" }
           Move-Item $l0.FullName libusb0
           Move-Item $lk.FullName libusbk
+          # Use C string literals for embedder paths. Unquoted MSBuild -D values
+          # turn these paths into invalid C tokens (verified in the prior CI log).
+          $configPath = 'vendor-libwdi/msvc/config.h'
+          $config = Get-Content $configPath -Raw
+          $config = $config.Replace('"C:/Program Files (x86)/Windows Kits/8.0"', '"../wdk/Windows Kits/8.0"')
+          $config = $config.Replace('"D:/libusb-win32"', '"../libusb0"')
+          $config = $config.Replace('"D:/libusbK/bin"', '"../libusbk/bin"')
+          Set-Content $configPath $config -Encoding ascii
       - uses: microsoft/setup-msbuild@v2
       - name: Compile pinned libwdi automated WinUSB helper
         shell: cmd
         run: |
           cd vendor-libwdi
-          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros="WDK_DIR=../wdk/Windows Kits/8.0;LIBUSB0_DIR=../libusb0;LIBUSBK_DIR=../libusbk/bin"
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64
           if errorlevel 1 exit /b 1
       - name: Compile Windows x64 self-contained GUI
         shell: pwsh
