@@ -1,0 +1,44 @@
+name: Test read-only native hardware inventory
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iphone-se/research/hardware-inventory.sh'
+      - '.github/workflows/test-hardware-inventory.yml'
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test synthetic hardware interfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          S=iphone-se/research/hardware-inventory.sh
+          sh -n "$S"
+          F="$(mktemp -d)"
+          trap 'rm -rf "$F"' EXIT
+          mkdir -p "$F/class/power_supply/battery" "$F/class/block/nvme0n1" "$F/class/thermal/thermal_zone0"
+          printf 'Battery\n' > "$F/class/power_supply/battery/type"
+          printf '61\n' > "$F/class/power_supply/battery/capacity"
+          printf 'Charging\n' > "$F/class/power_supply/battery/status"
+          printf '32000\n' > "$F/class/thermal/thermal_zone0/temp"
+          sh "$S" --fixture "$F" > report.txt
+          grep -Fx '  capacity=61' report.txt
+          grep -Fx '  status=Charging' report.txt
+          grep -Fx '  health=unavailable' report.txt
+          grep -F 'temp_mC=32000' report.txt
+          grep -F 'block: 1 enumerated' report.txt
+          mkdir "$F/empty"
+          sh "$S" --fixture "$F/empty" > missing.txt
+          grep -F 'charging and battery state unverified' missing.txt
+          grep -F 'block: 0 enumerated' missing.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Hardware-Inventory-SYNTHETIC-TEST
+          path: |
+            report.txt
+            missing.txt
