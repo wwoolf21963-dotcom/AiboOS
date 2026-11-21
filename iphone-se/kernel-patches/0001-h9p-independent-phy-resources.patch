@@ -1,0 +1,74 @@
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -628,7 +628,8 @@
+  * @default_link_speed: target link speed of a root port without
+  *	max-link-speed (used by T7000)
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+- * @has_phy: the controller has "phy" and "phy-ip" register windows
++ * @has_phy: the controller has a "phy" register window
++ * @has_phy_ip: the controller has a separate "phy-ip" register window
+  * @has_nvmmu: the storage port has an NVMMU ("nvmmu" window and interrupt)
+  * @port3_link_events: port 3's event interrupt is armed by @setup_port, and
+  *	its link event re-enables the root complex
+@@ -657,6 +658,7 @@
+ 	u8 default_link_speed;
+ 	bool has_clocks;
+ 	bool has_phy;
++	bool has_phy_ip;
+ 	bool has_nvmmu;
+ 	bool port3_link_events;
+ 	bool no_port_irqs;
+@@ -3235,7 +3237,9 @@
+ 			devm_platform_ioremap_resource_byname(pdev, "phy");
+ 		if (IS_ERR(pcie->base_phy))
+ 			return PTR_ERR(pcie->base_phy);
+-
++	}
++
++	if (pcie->hw->has_phy_ip) {
+ 		pcie->base_phy_ip =
+ 			devm_platform_ioremap_resource_byname(pdev, "phy-ip");
+ 		if (IS_ERR(pcie->base_phy_ip))
+@@ -3290,7 +3294,8 @@
+ 		return ret;
+ 	if (pcie->preinit_phy_ports & ~GENMASK(H9P_NUM_PORTS - 1, 0))
+ 		return -EINVAL;
+-	if (pcie->preinit_phy_ports && !pcie->hw->has_phy)
++	if (pcie->preinit_phy_ports &&
++	    (!pcie->hw->has_phy || !pcie->hw->has_phy_ip))
+ 		return -EINVAL;
+ 
+ 	for_each_available_child_of_node(dev->of_node, np) {
+@@ -3597,6 +3602,7 @@
+ 	.nvmmu_init_busy = T8010_NVMMU_TCB_CTRL_INIT_BUSY,
+ 	.has_clocks = true,
+ 	.has_phy = true,
++	.has_phy_ip = true,
+ 	.has_nvmmu = true,
+ 	.port3_link_events = true,
+ };
+@@ -3607,6 +3613,7 @@
+ 	.nvmmu_init_busy = T8010_NVMMU_TCB_CTRL_INIT_BUSY,
+ 	.has_clocks = true,
+ 	.has_phy = true,
++	.has_phy_ip = true,
+ 	.has_nvmmu = true,
+ 	.port3_link_events = true,
+ 	.j172_bridge_quirk = true,
+@@ -3623,6 +3630,7 @@
+ 	.default_link_speed = H9P_LINK_SPEED_2_5GT,
+ 	.has_clocks = true,
+ 	.has_phy = true,
++	.has_phy_ip = true,
+ 	.phy_tunables = H9P_TUNABLES(t8015_phy_tunables),
+ 	.common_tunables = H9P_TUNABLES(t8015_rc_common_tunables),
+ 	.config_tunables = H9P_TUNABLES(t8015_config_tunables),
+@@ -3636,6 +3644,7 @@
+ 	.nvme_mode_ports = BIT(0),
+ 	.link_settle_ms = 100,
+ 	.has_phy = true,
++	.has_phy_ip = true,
+ 	.has_nvmmu = true,
+ 	.phy_tunables = H9P_TUNABLES(s8003_phy_tunables),
+ 	.common_tunables = H9P_TUNABLES(s8003_rc_common_tunables),

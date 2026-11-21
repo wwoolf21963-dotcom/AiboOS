@@ -1,0 +1,3 @@
+# Samsung S8000 PCIe driver prerequisite
+
+The existing H9P controller represents the main PHY and the separate PHY-IP register windows with one flag. The verified n69u public device-tree map lacks the latter. This patch separates the mapping flags and retains both on all previously supported SoCs. The preinit path still requires both resources. No new hardware match is added, no unsupported register sequence runs, and the S8000 PCIe controller remains disabled. This is a source-level prerequisite, not Samsung PHY initialization. The targeted build compiles the ARM64 PCIe object against pinned OrchardLinux and checks its ELF architecture. Integration into a complete kernel and board testing remain outstanding.

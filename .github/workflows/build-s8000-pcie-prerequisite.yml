@@ -1,0 +1,50 @@
+name: Compile Samsung PCIe driver prerequisite
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iphone-se/kernel-patches/0001-h9p-independent-phy-resources.patch'
+      - '.github/workflows/build-s8000-pcie-prerequisite.yml'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kernel compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git clang lld llvm build-essential flex bison bc libssl-dev libelf-dev libncurses-dev dwarves
+      - name: Apply patch to pinned OrchardLinux source and compile PCIe driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          K="$RUNNER_TEMP/orchard"
+          git init "$K"
+          git -C "$K" remote add origin https://github.com/OrchardLinux/linux.git
+          git -C "$K" fetch --depth=1 origin ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1
+          git -C "$K" checkout --detach FETCH_HEAD
+          test "$(git -C "$K" rev-parse HEAD)" = ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1
+          P="$PWD/iphone-se/kernel-patches/0001-h9p-independent-phy-resources.patch"
+          git -C "$K" apply --check "$P"
+          git -C "$K" apply "$P"
+          git -C "$K" diff --check
+          make -C "$K" ARCH=arm64 LLVM=1 orchard_apple16k_defconfig
+          "$K/scripts/config" --file "$K/.config" --enable PCI --enable PCI_MSI --enable PCIE_APPLE_H9P
+          make -C "$K" ARCH=arm64 LLVM=1 olddefconfig
+          grep -qx 'CONFIG_PCIE_APPLE_H9P=y' "$K/.config"
+          make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 drivers/pci/controller/pcie-apple-h9p.o
+          mkdir -p report
+          cp "$K/drivers/pci/controller/pcie-apple-h9p.o" report/
+          llvm-readelf -h report/pcie-apple-h9p.o | tee report/elf-header.txt
+          grep -q AArch64 report/elf-header.txt
+          git -C "$K" diff > report/applied.patch
+          printf '%s\n' 'Compiled driver prerequisite only. No Samsung PHY initialization or hardware test.' > report/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: S8000-PCIE-DRIVER-PREREQUISITE
+          path: report/
+          if-no-files-found: error
