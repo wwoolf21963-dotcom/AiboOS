@@ -1,0 +1,57 @@
+name: Build AiboOS iPhone SE RAM Boot Experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-iphone-se-ram-boot.yml'
+      - '.github/scripts/build-iphone-se-ram-boot.sh'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aiboos-se-ram-boot
+  cancel-in-progress: true
+
+jobs:
+  ram-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout AiboOS
+        uses: actions/checkout@v4
+      - name: Check script and web assets
+        run: |
+          bash -n .github/scripts/build-iphone-se-ram-boot.sh
+          test -s AiboOS/Web/index.html
+      - name: Download the verified ARM64 kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-ARM64-development-kit
+          run-id: 44906030345
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: kernel-dev-kit
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            make cpio gzip xz-utils file python3 curl
+      - name: Build m1n1 and RAM-only experimental boot payload
+        run: bash .github/scripts/build-iphone-se-ram-boot.sh
+      - name: Validate RAM boot experiment
+        run: |
+          test -s iphone-se-ram-boot/m1n1-linux.bin
+          test -s iphone-se-ram-boot/initramfs.cpio.gz
+          test -s iphone-se-ram-boot/READ_ME_FIRST.txt
+          gzip -t iphone-se-ram-boot/initramfs.cpio.gz
+          (cd iphone-se-ram-boot && sha256sum -c SHA256SUMS.txt)
+      - name: Upload RAM-only experiment
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-RAM-boot-experiment-NOT-FLASHABLE
+          path: iphone-se-ram-boot/
+          retention-days: 30
+          if-no-files-found: error
