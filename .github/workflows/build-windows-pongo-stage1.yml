@@ -1,0 +1,51 @@
+name: Build AiboOS Windows Pongo First Stage (Experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows-pongo-stage1.yml'
+      - 'windows-pongo-stage1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aiboos-se-windows-first-stage
+  cancel-in-progress: true
+
+jobs:
+  build-windows-first-stage:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MSYS2 native Windows compiler and USB libs
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libusb
+            python
+      - name: Compile guarded upstream Pongo first stage
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          bash windows-pongo-stage1/build-stage1.sh
+      - name: Validate EXE on Windows runner
+        shell: pwsh
+        run: |
+          & ./dist/native-first-stage/aiboos-pongo-stage1.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Native Windows selftest failed" }
+          & ./dist/native-first-stage/aiboos-pongo-stage1.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "Native Windows help test failed" }
+      - name: Publish EXPERIMENTAL binary - not an OS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-SE-Windows-Pongo-First-Stage-UNTESTED
+          path: dist/native-first-stage/
+          retention-days: 30
+          if-no-files-found: error
