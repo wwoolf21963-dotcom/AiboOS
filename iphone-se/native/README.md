@@ -40,3 +40,7 @@ or disk access. Both are included in the RAM and ext4 development builds.
 The renderer/navigation self-tests do not exercise the phone's hardware.
 Kernel gadget config, host serial enumeration, evdev key mapping, and A9
 storage, wireless, and touch support remain to be verified on-device.
+
+## Linux-side installation prototype
+
+The new RAM image includes `/bin/aiboos-install` and a checksum-verified archive of the current ARM64 root filesystem. It inventories Linux block devices, and can deploy the filesystem into a dedicated already-mounted writable ext4 volume under `/mnt`, with an explicit `.aiboos-install-target` marker containing `AIBOOS-DEDICATED-LINUX-VOLUME`. Existing files are refused; deployment uses staging and checks the installed system before renaming. CI exercises actual deployment and overwrite refusal on a disposable loop-mounted ext4 volume. This is not an iOS replacement: no raw disk writing, repartitioning, transport, bootloader changes or automatic boot are implemented. Physical A9 storage access is unknown.

@@ -19,7 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rootfs:
+    uses: ./.github/workflows/build-aiboos-rootfs.yml
   ram-boot:
+    needs: rootfs
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -36,11 +39,16 @@ jobs:
           run-id: 44906030345
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: kernel-dev-kit
+      - name: Download current AiboOS filesystem to embed in Linux installer
+        uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          path: install-rootfs
       - name: Install build prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y git gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            make cpio gzip xz-utils file python3 curl device-tree-compiler
+            make cpio gzip xz-utils file python3 curl device-tree-compiler e2fsprogs
       - name: Build m1n1 and RAM-only experimental boot payload
         run: bash .github/scripts/build-iphone-se-ram-boot.sh
       - name: Validate RAM boot experiment

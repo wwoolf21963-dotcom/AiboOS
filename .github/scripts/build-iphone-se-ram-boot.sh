@@ -58,6 +58,35 @@ chmod 755 "$TMP/initramfs/bin/aiboos-fb"
 install -m 755 "$ROOT/iphone-se/native/aiboos-usb-serial.sh" "$TMP/initramfs/bin/aiboos-usb-serial"
 sh -n "$TMP/initramfs/bin/aiboos-usb-serial"
 sh "$TMP/initramfs/bin/aiboos-usb-serial" --selftest
+install -m 755 "$ROOT/iphone-se/native/aiboos-install.sh" "$TMP/initramfs/bin/aiboos-install"
+sh -n "$TMP/initramfs/bin/aiboos-install"
+mkdir -p "$TMP/initramfs/opt/aiboos/install" "$TMP/install-root"
+(cd "$ROOT/install-rootfs" && sha256sum -c SHA256SUMS.txt)
+xz -dc "$ROOT/install-rootfs/AiboOS-ARM64-rootfs.ext4.xz" > "$TMP/install.ext4"
+mkdir -p "$TMP/install-mount"
+sudo mount -o loop,ro,noload "$TMP/install.ext4" "$TMP/install-mount"
+trap 'sudo umount "$TMP/install-mount" 2>/dev/null || true' EXIT
+sudo tar --numeric-owner --exclude='./lost+found' -czf "$TMP/initramfs/opt/aiboos/install/rootfs.tar.gz" -C "$TMP/install-mount" .
+sudo umount "$TMP/install-mount"
+trap - EXIT
+sudo chown "$(id -u):$(id -g)" "$TMP/initramfs/opt/aiboos/install/rootfs.tar.gz"
+(cd "$TMP/initramfs/opt/aiboos/install" && sha256sum rootfs.tar.gz > SHA256SUMS.txt)
+tar -tzf "$TMP/initramfs/opt/aiboos/install/rootfs.tar.gz" | grep -x './sbin/init'
+# Exercise actual deployment to a disposable Linux ext4 loop volume in CI.
+testvol=/mnt/aiboos-ci-test
+sudo mkdir -p "$testvol"
+truncate -s 384M "$TMP/test-volume.ext4"
+mkfs.ext4 -q -F "$TMP/test-volume.ext4"
+sudo mount -o loop "$TMP/test-volume.ext4" "$testvol"
+trap 'sudo umount "$testvol" 2>/dev/null || true' EXIT
+printf '%s\n' AIBOOS-DEDICATED-LINUX-VOLUME | sudo tee "$testvol/.aiboos-install-target" >/dev/null
+sed "s|^bundle=/opt/aiboos/install$|bundle=$TMP/initramfs/opt/aiboos/install|" "$TMP/initramfs/bin/aiboos-install" > "$TMP/install-ci.sh"
+sudo sh "$TMP/install-ci.sh" --install "$testvol"
+sudo test -x "$testvol/AiboOS/bin/busybox"
+sudo grep -qx ID=aiboos "$testvol/AiboOS/etc/os-release"
+if sudo sh "$TMP/install-ci.sh" --install "$testvol"; then echo "Overwrite refusal test failed"; exit 1; fi
+sudo umount "$testvol"
+trap - EXIT
 cat > "$TMP/initramfs/init" <<'INIT'
 #!/bin/busybox sh
 export PATH=/bin:/sbin
@@ -71,6 +100,10 @@ echo 'AiboOS native framebuffer module available; visual output depends on Linux
 echo 'Web UI files are bundled but no web runtime is installed.'
 /bin/aiboos-usb-serial >/run/aiboos-usb.log 2>&1 &
 /bin/aiboos-fb --ui >/run/aiboos-ui.log 2>&1 &
+/bin/aiboos-install --probe >/run/aiboos-storage.log 2>&1 || true
+cat /run/aiboos-storage.log
+echo 'Phone-side Linux volume installation command: aiboos-install --install /mnt/aiboos'
+echo 'Requires a dedicated, prepared ext4 mount; never formats or writes raw storage.'
 echo 'Native A9 internal storage support is unverified; no permanent installation attempted.'
 exec /bin/busybox sh </dev/console >/dev/console 2>&1
 INIT
