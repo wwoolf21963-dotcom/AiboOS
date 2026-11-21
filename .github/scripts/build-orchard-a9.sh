@@ -11,6 +11,11 @@ git -C "$K" fetch --depth=1 origin "$PIN"
 git -C "$K" checkout --detach FETCH_HEAD
 test "$(git -C "$K" rev-parse HEAD)" = "$PIN"
 printf '%s\n' "$PIN" > "$OUT/kernel-commit.txt"
+PATCH="$ROOT/iphone-se/kernel-patches/0001-h9p-independent-phy-resources.patch"
+git -C "$K" apply --check "$PATCH"
+git -C "$K" apply "$PATCH"
+git -C "$K" diff --check
+cp "$PATCH" "$OUT/"
 make -C "$K" ARCH=arm64 LLVM=1 orchard_apple16k_defconfig
 # Standard Linux runtime features only. Preserve all upstream board definitions.
 "$K/scripts/config" --file "$K/.config" \
@@ -36,7 +41,7 @@ import pathlib, subprocess, gzip, sys
 out=pathlib.Path(sys.argv[1])
 with gzip.open(out/"Image.gz","rb") as f:
     assert f.read(64)[56:60]==b"ARM\x64"
-report=["OrchardLinux A9 build: static inspection only, not hardware tests."]
+report=["OrchardLinux A9 build: static inspection only, not hardware tests.", "AiboOS H9P independent PHY-resource patch applied; S8000 initialization unfinished."]
 def fdt(p,node,prop):
     return subprocess.check_output(["fdtget","-t","s",str(p),node,prop],text=True).strip()
 for board,compatible in [("s8000-n69u","apple,n69u"),("s8003-n69","apple,n69")]:
@@ -73,4 +78,4 @@ This is NOT an iPhone installer. The kernel and root filesystem have not been
 boot-tested together on an iPhone. The TSMC storage controller remains disabled
 for the SE in the upstream device tree. No speculative hardware definitions.
 TXT
-(cd "$OUT" && sha256sum Image.gz apple-dtbs/*.dtb kernel.config kernel-commit.txt AiboOS-ARM64-rootfs.ext4.xz HARDWARE-REPORT.txt > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+(cd "$OUT" && sha256sum Image.gz apple-dtbs/*.dtb kernel.config kernel-commit.txt 0001-h9p-independent-phy-resources.patch AiboOS-ARM64-rootfs.ext4.xz HARDWARE-REPORT.txt > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)

@@ -18,7 +18,71 @@ validate() {
     done
     (cd "$root" && sha256sum -c .aiboos-system-sha256) || fail "Installed system checksum mismatch."
 }
+# Resolve a specific ext4 filesystem UUID, without modifying any volume.
+locate_uuid() {
+    uuid=$1
+    printf '%s\n' "$uuid" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || fail "Invalid filesystem UUID."
+    count=0
+    selected=
+    for entry in /sys/class/block/*; do
+        [ -r "$entry/size" ] || continue
+        name=$(basename "$entry")
+        case "$name" in loop*|ram*|zram*|dm-*|md*) continue;; esac
+        dev="/dev/$name"
+        [ -b "$dev" ] || continue
+        info=$(/bin/busybox blkid "$dev" 2>/dev/null) || continue
+        case " $info " in *" UUID=\"$uuid\" "*) ;; *) continue;; esac
+        case " $info " in *' TYPE="ext4" '*) ;; *) continue;; esac
+        count=$((count+1))
+        selected=$dev
+    done
+    [ "$count" = 1 ] || fail "Expected exactly one ext4 device with UUID $uuid; found $count."
+    printf '%s\n' "$selected"
+}
+mounted_volume_valid() {
+    target=$1
+    [ -f "$target/.aiboos-install-target" ] && [ ! -L "$target/.aiboos-install-target" ] || return 1
+    [ "$(cat "$target/.aiboos-install-target")" = AIBOOS-DEDICATED-LINUX-VOLUME ] || return 1
+    (validate "$target/AiboOS")
+}
 case "${1:-}" in
+    --locate-uuid)
+        [ "$#" = 2 ] || fail "Specify an ext4 UUID."
+        locate_uuid "$2"
+        ;;
+    --boot-uuid)
+        [ "$#" = 2 ] || fail "Specify an ext4 UUID."
+        [ "$$" = 1 ] || fail "Root handoff requires Linux PID 1."
+        [ "$(stat -f -c %T /)" = tmpfs ] || [ "$(stat -f -c %T /)" = ramfs ] || fail "Root handoff requires a RAM root."
+        target=/mnt/aiboos
+        mkdir -p "$target"
+        [ "$(readlink -f "$target")" = "$target" ] || fail "Mountpoint must be canonical."
+        if mountpoint -q "$target"; then fail "Mountpoint already occupied."; fi
+        [ -z "$(ls -A "$target")" ] || fail "Mountpoint must be empty."
+        tries=0
+        while ! dev=$(locate_uuid "$2" 2>/run/aiboos-storage-start.log); do
+            tries=$((tries+1))
+            [ "$tries" -lt 15 ] || fail "Unable to locate designated ext4 volume."
+            sleep 1
+        done
+        # Check the kernel's major/minor mount records, not just the device alias.
+        name=$(basename "$dev")
+        number=$(cat "/sys/class/block/$name/dev")
+        awk -v n="$number" '$3==n{found=1} END{exit found}' /proc/self/mountinfo || fail "Designated device already mounted."
+        mount -t ext4 -o ro,noload "$dev" "$target" || fail "Read-only volume mount failed."
+        if ! mounted_volume_valid "$target"; then
+            umount "$target" || true
+            fail "Volume marker or installed system verification failed."
+        fi
+        umount "$target" || fail "Cannot unmount read-only volume."
+        mount -t ext4 -o rw "$dev" "$target" || fail "Writable volume mount failed."
+        if ! mounted_volume_valid "$target"; then
+            umount "$target" || true
+            fail "Installed root changed after mount."
+        fi
+        echo "Verified designated AiboOS volume $dev."
+        exec /bin/busybox sh /bin/aiboos-root-start --boot-mounted "$target"
+        ;;
     --verify)
         [ "$#" = 2 ] || fail "Specify installed root."
         validate "$2"
@@ -46,5 +110,5 @@ case "${1:-}" in
         echo "Starting installed AiboOS Linux userspace."
         exec /bin/busybox switch_root "$root" /sbin/init
         ;;
-    *) fail "Usage: aiboos-root-start --verify ROOT | --boot-mounted /mnt/aiboos";;
+    *) fail "Usage: aiboos-root-start --verify ROOT | --locate-uuid UUID | --boot-uuid UUID | --boot-mounted /mnt/aiboos";;
 esac

@@ -67,9 +67,9 @@ while [ ! -b /dev/vda ]; do
  i=$((i+1)); [ "$i" -lt 30 ] || exit 1
  sleep 1
 done
-mount -t ext4 /dev/vda /mnt/aiboos
 case " $(cat /proc/cmdline) " in
  *" aiboos_ci=install "*)
+  mount -t ext4 /dev/vda /mnt/aiboos
   echo AIBOOS-DEDICATED-LINUX-VOLUME > /mnt/aiboos/.aiboos-install-target
   /bin/aiboos-install --install /mnt/aiboos
   /bin/aiboos-root-start --verify /mnt/aiboos/AiboOS
@@ -80,7 +80,9 @@ case " $(cat /proc/cmdline) " in
   poweroff -f
   ;;
  *" aiboos_ci=restart "*)
-  exec /bin/busybox sh /bin/aiboos-root-start --boot-mounted /mnt/aiboos
+  if /bin/aiboos-root-start --locate-uuid 00000000-0000-0000-0000-000000000000; then echo "Wrong UUID accepted"; exit 1; fi
+  test "$(/bin/aiboos-root-start --locate-uuid 2a1b0000-1234-4567-89ab-0123456789ab)" = /dev/vda
+  exec /bin/busybox sh /bin/aiboos-root-start --boot-uuid 2a1b0000-1234-4567-89ab-0123456789ab
   ;;
  *) exit 1;;
 esac
@@ -90,7 +92,7 @@ sudo mknod -m 600 "$TMP/ram/dev/console" c 5 1
 sudo mknod -m 666 "$TMP/ram/dev/null" c 1 3
 (cd "$TMP/ram" && sudo find . -print0 | sudo cpio --null -o -H newc --quiet | gzip -n) > "$TMP/ram.cpio.gz"
 truncate -s 512M "$TMP/test-disk.ext4"
-mkfs.ext4 -q -F "$TMP/test-disk.ext4"
+mkfs.ext4 -q -F -U 2a1b0000-1234-4567-89ab-0123456789ab "$TMP/test-disk.ext4"
 test -f "$TMP/test-disk.ext4" && test ! -L "$TMP/test-disk.ext4"
 run_vm() {
  timeout 240 qemu-system-aarch64 -machine virt -cpu cortex-a57 -smp 2 -m 1024 \
@@ -103,6 +105,7 @@ run_vm() {
 run_vm install
 grep -q AIBOOS_CI_INSTALL_COMPLETE "$REPORT/install.log"
 run_vm restart
+grep -q "Verified designated AiboOS volume /dev/vda" "$REPORT/restart.log"
 grep -q AIBOOS_CI_INSTALLED_ROOT_STARTED "$REPORT/restart.log"
 e2fsck -fn "$TMP/test-disk.ext4" | tee "$REPORT/filesystem-check.log"
 echo "PASS: guest installation, shutdown, restart, installed init and persistence on a virtual ARM64 disk." | tee "$REPORT/result.txt"

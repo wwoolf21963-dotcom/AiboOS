@@ -108,6 +108,22 @@ export PATH=/bin:/sbin
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+# Optional explicit Linux root UUID; default remains RAM only.
+uuid=
+seen=0
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        aiboos.root_uuid=*)
+            if [ "$seen" = 1 ]; then echo "Duplicate root designation; using RAM mode."; uuid=; break; fi
+            seen=1
+            uuid=${arg#aiboos.root_uuid=}
+            ;;
+    esac
+done
+if [ -n "$uuid" ]; then
+    exec /bin/busybox sh /bin/aiboos-root-start --boot-uuid "$uuid"
+fi
 echo 'AiboOS SE 2016: experimental Linux RAM boot reached userspace'
 echo 'Internal storage is not mounted or modified by this initramfs.'
 echo 'AiboOS native framebuffer module available; visual output depends on Linux display driver.'

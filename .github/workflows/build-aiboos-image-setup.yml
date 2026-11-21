@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/build-aiboos-image-setup.yml'
       - 'windows-os-image-setup/**'
+      - 'iphone-se/native/aiboos-root-start.sh'
+      - '.github/scripts/test-install-lifecycle.sh'
 permissions:
   contents: read
   actions: read
@@ -116,7 +118,7 @@ jobs:
               checksum, name = line.split(maxsplit=1)
               expected[name.lstrip("*")] = checksum.lower()
           names = ["Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb"]
-          metadata = ["kernel-commit.txt", "kernel.config", "HARDWARE-REPORT.txt"]
+          metadata = ["kernel-commit.txt", "kernel.config", "HARDWARE-REPORT.txt", "0001-h9p-independent-phy-resources.patch"]
           assert (root / "kernel-commit.txt").read_text().strip() == "ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1"
           source = pathlib.Path("rootfs-artifact/AiboOS-ARM64-rootfs.ext4.xz")
           assert hashlib.sha256(source.read_bytes()).hexdigest() == expected["AiboOS-ARM64-rootfs.ext4.xz"], "Kernel bundle filesystem differs from tested filesystem"
