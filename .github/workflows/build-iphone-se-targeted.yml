@@ -1,0 +1,55 @@
+name: Build AiboOS iPhone SE A9 Targeted RAM Kits
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-iphone-se-targeted.yml'
+      - 'iphone-se/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aiboos-iphone-se-a9-targeted
+  cancel-in-progress: true
+
+jobs:
+  make-a9-targeted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout AiboOS
+        uses: actions/checkout@v4
+      - name: Validate packaging script
+        run: |
+          bash -n iphone-se/build-targeted-kits.sh
+          test -s iphone-se/Windows-Readiness.ps1
+      - name: Download verified RAM boot bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-RAM-boot-experiment-NOT-FLASHABLE
+          run-id: 44907245315
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: previous-ram-kit
+      - name: Install device-tree verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler
+      - name: Prepare two board-specific A9 experiments
+        run: bash iphone-se/build-targeted-kits.sh
+      - name: Verify required output files
+        run: |
+          test -s iphone-se-a9-targeted/Samsung-S8000/m1n1-linux.bin
+          test -s iphone-se-a9-targeted/TSMC-S8003/m1n1-linux.bin
+          test -s iphone-se-a9-targeted/Windows-Readiness.ps1
+          test -s iphone-se-a9-targeted/READ_ME_FIRST.txt
+      - name: Upload A9 experiments (NOT FLASHABLE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-A9-two-variants-NOT-FLASHABLE
+          path: iphone-se-a9-targeted/
+          if-no-files-found: error
+          retention-days: 30
