@@ -52,6 +52,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Native Windows selftest failed" }
           & ./dist/native-first-stage/aiboos-pongo-stage1.exe --help
           if ($LASTEXITCODE -ne 0) { throw "Native Windows help test failed" }
+      - name: Validate read-only iPhone DFU identity inspector
+        shell: pwsh
+        run: |
+          & ./dist/native-first-stage/aiboos-dfu-identity.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "DFU identity parser offline test failed" }
+          if (-not (Test-Path ./dist/native-first-stage/Start-DFU-Identity-Check.cmd)) {
+            throw "Missing read-only DFU identity launcher"
+          }
       - name: Validate automatic Windows preparation (offline)
         shell: pwsh
         run: |

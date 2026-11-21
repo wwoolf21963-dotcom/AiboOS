@@ -80,3 +80,13 @@ already active, avoiding an unnecessary libusb_set_configuration request.
 It stops after a limited number of USB checks and prints an error rather
 than waiting indefinitely. This fix has NOT been tested on real iPhone.
 Do not repeatedly run the exploit if the new report indicates a failure.
+
+
+READ-ONLY DFU IDENTITY DIAGNOSTIC
+---------------------------------
+Run Start-DFU-Identity-Check.cmd with the device in DFU 05AC:1227.
+It opens the device, reads standard USB descriptors and shows only CPID and
+iBoot/SRTG version, NEVER the full serial or ECID. It does not exploit,
+claim interfaces, change USB configuration, or modify the iPhone. It also
+checks that the observed chip and iBoot combination match the pinned openra1n
+profiles. Report MATCH or BLOCKED output before more boot attempts.

@@ -29,13 +29,16 @@ gcc -std=gnu11 -O2 -Wall -fcommon -DWIN32 -DHAVE_LIBUSB -I./include \
   ../windows-pongo-stage1/guarded-main.c \
   common.c checkm8.c usb.c usb_libusb.c lz4/lz4.c lz4/lz4hc.c \
   -lusb-1.0 -o ../dist/native-first-stage/aiboos-pongo-stage1.exe
+gcc -std=c11 -O2 -Wall -Wextra -Werror ../windows-pongo-stage1/inspect-dfu.c -lusb-1.0 -o ../dist/native-first-stage/aiboos-dfu-identity.exe
 cp /ucrt64/bin/libusb-1.0.dll ../dist/native-first-stage/
+cp ../windows-pongo-stage1/Start-DFU-Identity-Check.cmd ../dist/native-first-stage/
 cp ../windows-pongo-stage1/Start-Stage1-Diagnostics.cmd ../dist/native-first-stage/
 cp ../windows-pongo-stage1/AiboOS-Windows-Setup.ps1 ../dist/native-first-stage/
 cp ../windows-pongo-stage1/Start-AiboOS-Setup.cmd ../dist/native-first-stage/
 cp ../windows-pongo-stage1/README_FIRST.txt ../dist/native-first-stage/
 printf 'Pinned upstream palera1n/openra1n revision: %s\n' "$UPSTREAM" > ../dist/native-first-stage/UPSTREAM.txt
 ../dist/native-first-stage/aiboos-pongo-stage1.exe --selftest
+../dist/native-first-stage/aiboos-dfu-identity.exe --selftest
 ../dist/native-first-stage/aiboos-pongo-stage1.exe --help
 ../dist/native-first-stage/aiboos-pongo-stage1.exe --probe
-(cd ../dist/native-first-stage && sha256sum aiboos-pongo-stage1.exe libusb-1.0.dll > SHA256SUMS.txt)
+(cd ../dist/native-first-stage && sha256sum aiboos-pongo-stage1.exe aiboos-dfu-identity.exe libusb-1.0.dll > SHA256SUMS.txt)
