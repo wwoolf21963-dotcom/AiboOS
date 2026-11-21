@@ -42,8 +42,8 @@ static int board_path_ok(const char *board, const char *path) {
     size_t n=strlen(path);
     const char *name="m1n1-linux.bin", *end=strrchr(path,'\\'), *end2=strrchr(path,'/');
     if(end2 && (!end || end2 > end)) end=end2;
-    if(!end) end=path-1;
-    return (size_t)(path+n-(end+1)) == strlen(name) && strcmp(end+1,name)==0;
+    const char *base = end ? end+1 : path;
+    return (size_t)(path+n-base) == strlen(name) && strcmp(base,name)==0;
 }
 
 static int check_file(const char *board, const char *path, unsigned long *out_len) {
@@ -172,7 +172,7 @@ static int upload_and_boot(libusb_device_handle *h,const char *path,unsigned lon
     unsigned long remaining=len;
     int failed=0;
     while(remaining) {
-        int want=remaining>CHUNK?CHUNK:(int)remaining;
+        int want=remaining>CHUNK ? (int)CHUNK : (int)remaining;
         if(fread(buf,1,(size_t)want,f)!=(size_t)want) { failed=1; break; }
         int off=0;
         while(off<want) {
