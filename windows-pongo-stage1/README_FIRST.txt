@@ -42,3 +42,10 @@ Pinned commit: 49fb794cde1f73cc7a00b502a42b994926c64c63
 openra1n: Apache-2.0; original checkm8 derived from gaster.
 PongoOS upstream: checkra1n/PongoOS; see original upstream licenses.
 This is not affiliated with Apple, palera1n, or checkra1n.
+
+Read-only DFU driver access test (NEW):
+Run Start-Stage1-Diagnostics.cmd while iPhone is in DFU (05ac:1227).
+The script now calls --test-dfu-access, which only attempts libusb_open and
+libusb_close: no interface claim, exploit, USB command, resets or NAND writes.
+If access is BLOCKED, DO NOT change USB drivers without reviewing the error.
+If it says OK, that proves only open access, not an exploit or Linux boot.

@@ -23,7 +23,7 @@
 static void usage(const char *name) {
     printf("AiboOS SE (2016) Windows native Pongo first-stage RESEARCH BUILD\n");
     printf("Upstream: palera1n/openra1n @ 49fb794cde1f73cc7a00b502a42b994926c64c63\n");
-    printf("Usage: %s --probe | --selftest | --help\n",name);
+    printf("Usage: %s --probe | --test-dfu-access | --selftest | --help\n",name);
     printf("       %s --load-pongo --acknowledge-experimental-risk\n",name);
     puts("NOT a real iOS replacement and NOT tested on an iPhone SE.");
     puts("Does not flash NAND or install drivers, but active exploit can fail.");
@@ -55,6 +55,55 @@ static int probe(int quiet) {
     }
     return dfu;
 }
+
+/* Device access test is READ ONLY. Does not claim interfaces, reset, send USB
+ * control transfers, install drivers, enter DFU, or run checkm8.
+ */
+static int test_dfu_access(void) {
+    libusb_context *ctx=NULL;
+    int r=libusb_init(&ctx);
+    if(r != LIBUSB_SUCCESS) {
+        fprintf(stderr,"[ERROR] libusb_init: %s\n",libusb_error_name(r));
+        return 2;
+    }
+    libusb_device **list=NULL;
+    ssize_t count=libusb_get_device_list(ctx,&list);
+    if(count<0) {
+        fprintf(stderr,"[ERROR] libusb list: %s\n",libusb_error_name((int)count));
+        libusb_exit(ctx);
+        return 2;
+    }
+    int dfu=0, open_result=LIBUSB_ERROR_NOT_FOUND;
+    for(ssize_t i=0;i<count;i++) {
+        struct libusb_device_descriptor d={0};
+        if(libusb_get_device_descriptor(list[i],&d)!=LIBUSB_SUCCESS) continue;
+        if(d.idVendor != APPLE_VID_LOCAL || d.idProduct != APPLE_DFU_LOCAL) continue;
+        dfu++;
+        if(dfu==1) {
+            libusb_device_handle *h=NULL;
+            open_result=libusb_open(list[i],&h);
+            if(open_result==LIBUSB_SUCCESS) {
+                printf("[OK] WinUSB/libusb can OPEN DFU 05AC:1227 on this Windows PC.\n");
+                printf("[NOTE] This does NOT verify exploit timing or iOS boot compatibility.\n");
+                libusb_close(h);
+            }
+        }
+    }
+    libusb_free_device_list(list,1);
+    libusb_exit(ctx);
+    if(dfu!=1) {
+        fprintf(stderr,"[STOP] Expected 1 iPhone in DFU; found %d. No changes made.\n",dfu);
+        return 1;
+    }
+    if(open_result!=LIBUSB_SUCCESS) {
+        fprintf(stderr,"[BLOCKED] libusb cannot open DFU: %s\n",libusb_error_name(open_result));
+        fprintf(stderr,"[SAFE] Do not change drivers automatically; send us the error text.\n");
+        return 3;
+    }
+    puts("[DONE] Read-only access test completed. No USB command was sent.");
+    return 0;
+}
+
 int main(int argc,char **argv) {
     if(argc==2 && strcmp(argv[1],"--help")==0) {usage(argv[0]);return 0;}
     if(argc==2 && strcmp(argv[1],"--selftest")==0) {
@@ -65,6 +114,9 @@ int main(int argc,char **argv) {
     }
     if(argc==2 && strcmp(argv[1],"--probe")==0) {
         return probe(0)<0?1:0;
+    }
+    if(argc==2 && strcmp(argv[1],"--test-dfu-access")==0) {
+        return test_dfu_access();
     }
     if(argc==3 && strcmp(argv[1],"--load-pongo")==0
                && strcmp(argv[2],"--acknowledge-experimental-risk")==0) {
