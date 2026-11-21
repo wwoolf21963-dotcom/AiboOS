@@ -30,6 +30,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-libusb
             python
+            git
       - name: Compile guarded upstream Pongo first stage
         shell: msys2 {0}
         run: |

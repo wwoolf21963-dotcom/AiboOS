@@ -21,7 +21,7 @@ for source in Path("payloads").glob("*"):
                    +"unsigned int "+name+"_len = "+str(len(data))+";\n")
     print("Embedded upstream payload:",source.name,len(data),"bytes")
 PY
-gcc -std=gnu11 -O2 -Wall -DWIN32 -DHAVE_LIBUSB -I./include \
+gcc -std=gnu11 -O2 -Wall -fcommon -DWIN32 -DHAVE_LIBUSB -I./include \
   ../windows-pongo-stage1/guarded-main.c \
   common.c checkm8.c usb.c usb_libusb.c lz4/lz4.c lz4/lz4hc.c \
   -lusb-1.0 -o ../dist/native-first-stage/aiboos-pongo-stage1.exe
