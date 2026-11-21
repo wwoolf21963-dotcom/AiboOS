@@ -223,7 +223,7 @@ internal sealed class SetupWindow : Form
         {
             case 0: case 2: await DownloadAllAsync(); break;
             case 1: CheckPc(); break;
-            case 3: LaunchRufus(); break;
+            case 3: await LaunchRufusAsync(); break;
             case 4: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
             case 5: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
             case 6:
@@ -352,7 +352,7 @@ internal sealed class SetupWindow : Form
         return actual.Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void LaunchRufus()
+    private async Task LaunchRufusAsync()
     {
         var path = Path.Combine(folder, RufusName);
         var iso = Path.Combine(folder, LinuxName);
@@ -362,8 +362,8 @@ internal sealed class SetupWindow : Form
                 "Files not prepared", MessageBoxButtons.OK, MessageBoxIcon.Information);
             currentStep = 2; RefreshStep(); return;
         }
-        if (!VerifyShaAsync(path, RufusSha).GetAwaiter().GetResult() ||
-            !VerifyShaAsync(iso, LinuxSha).GetAwaiter().GetResult())
+        if (!await VerifyShaAsync(path, RufusSha) ||
+            !await VerifyShaAsync(iso, LinuxSha))
         {
             MessageBox.Show("One downloaded file failed its SHA-256 check. Rufus will not start.",
                 "Integrity check failed", MessageBoxButtons.OK, MessageBoxIcon.Error); return;
