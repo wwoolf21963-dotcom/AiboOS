@@ -1,0 +1,87 @@
+name: Build AiboOS unified native setup
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'native-setup-web/**'
+      - '.github/workflows/build-native-web-setup.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          run-id: 44951640828
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: input-rootfs
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-ARM64-development-kit
+          run-id: 44906030345
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: input-kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-Windows-DFU-Driver-Preparation-NOT-iOS-Replacement
+          run-id: 44931020238
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: input-driver
+      - name: Make native payload and verify sources
+        shell: python
+        run: |
+          import hashlib, pathlib, shutil, lzma
+          out=pathlib.Path("native-setup-web/native"); out.mkdir()
+          def digest(p):
+              with p.open("rb") as f: return hashlib.file_digest(f,"sha256").hexdigest()
+          for root,names in [("input-rootfs",["AiboOS-ARM64-rootfs.ext4.xz"]),("input-kernel",["Image.gz","apple-dtbs/s8000-n69u.dtb","apple-dtbs/s8003-n69.dtb"])]:
+              source=pathlib.Path(root)
+              sums=dict((x.split(maxsplit=1)[1].lstrip("*"),x.split(maxsplit=1)[0]) for x in (source/"SHA256SUMS.txt").read_text().splitlines())
+              for name in names:
+                  p=source/name
+                  assert digest(p)==sums[name],name
+                  shutil.copyfile(p,out/p.name)
+          shutil.copyfile("input-kernel/kernel-commit.txt",out/"kernel-commit.txt")
+          sums=[digest(p)+"  "+p.name for p in sorted(out.iterdir())]
+          with lzma.open(out/"AiboOS-ARM64-rootfs.ext4.xz","rb") as f: d=hashlib.file_digest(f,"sha256").hexdigest()
+          sums.append(d+"  AiboOS-ARM64-rootfs.ext4")
+          (out/"SHA256SUMS.txt").write_text("\n".join(sums)+"\n")
+          shutil.copyfile("AiboOS/Web/logo.png","native-setup-web/logo.png")
+      - name: Build desktop launcher and test payload extraction
+        shell: pwsh
+        run: |
+          python native-setup-web/setup.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Native payload test failed" }
+          python -m pip install pyinstaller==6.12.0
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed" }
+          python -m PyInstaller --noconfirm --onefile --noconsole --name AiboOS-Setup --add-data "native-setup-web/index.html;." --add-data "native-setup-web/logo.png;." native-setup-web/setup.py
+          if ($LASTEXITCODE -ne 0) { throw "Setup build failed" }
+          New-Item -ItemType Directory -Path package | Out-Null
+          Copy-Item dist/AiboOS-Setup.exe package/
+          Copy-Item native-setup-web/native package/ -Recurse
+          Copy-Item windows-linux-boot-assistant/Prepare-DFU-Driver.ps1 package/
+          Copy-Item input-driver/AiboOS-DFU-Driver-Tool.exe package/
+          Copy-Item input-driver/LIBWDI-*.txt package/
+          $test=Start-Process (Resolve-Path package/AiboOS-Setup.exe) -ArgumentList '--selftest' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw "Compiled Setup selftest failed" }
+          @'
+          Extract the full ZIP, then open AiboOS-Setup.exe.
+          This is a native Linux development package with the AiboOS branding.
+          It verifies and exports ARM64 image files locally and checks Windows USB drivers.
+          It does not install an iOS profile or app.
+          It does not yet boot or install Linux on the physical iPhone.
+          '@ | Set-Content package/READ-ME.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-Unified-Native-Setup-DEVELOPMENT
+          path: package/
+          if-no-files-found: error
+          retention-days: 30
