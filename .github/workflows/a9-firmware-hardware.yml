@@ -1,0 +1,27 @@
+name: Compare A9 SE public firmware hardware descriptions
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/a9-firmware-hardware.yml'
+      - 'iphone-se/research/compare-firmware-trees.py'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python iphone-se/research/compare-firmware-trees.py --selftest
+      - run: python -m pip install lzfse==0.4.2
+      - run: python iphone-se/research/compare-firmware-trees.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-A9-SE-Controller-Comparison
+          path: a9-firmware-hardware-report/
+          if-no-files-found: error
