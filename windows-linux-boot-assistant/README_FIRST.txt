@@ -1,68 +1,35 @@
-AiboOS WINDOWS → LINUX BOOT ASSISTANT
-=====================================
-Version 0.1 — Windows 11 x64, portable GUI, no Python, no WSL.
+AiboOS Windows Auto Readiness (NO USB STICK REQUIRED)
+=====================================================
+Build: 0.2.0 — Windows 11 x64, self-contained GUI.
 
-WHAT IT DOES:
-- Checks the Windows CPU architecture and removable drives (read-only).
-- Downloads palen1x v3.0.0-beta.4 x86_64 ISO directly from official GitHub
-  and verifies SHA-256 against GitHub release metadata.
-- Downloads Rufus 4.16 directly from official GitHub and SHA-256 verifies it.
-- Opens Rufus only after user confirmation and verified downloads.
-- Guides you through selecting spare USB, DD image mode, boot picker,
-  and manual DFU/iPhone steps.
-- Shows explicit warnings before the USB-erasing step.
-- Never automatically selects/erases a disk or changes firmware/boot options.
+HOW IT WORKS
+Double-click AiboOS-Setup.exe. It immediately and automatically:
+- Checks the current Windows Apple USB device mode using Windows CIM.
+- Looks for Apple VID 05AC in DFU (1227), Recovery (1281),
+  normal iOS (12A8) or a PongoOS USB ID (4141).
+- Updates the on-screen connection status every 20 seconds.
+- Warns clearly when full AiboOS installation is NOT AVAILABLE.
+- Lets advanced users optionally select an iPhone generation and iOS version
+  for compatibility notes. Selection is not needed for the automatic scan.
+- Copies a privacy-preserving local report on user request.
 
-WHAT IT CANNOT DO:
-- Start Linux from a normal running Windows process.
-- Reliably execute checkm8 in Windows/WSL/VM.
-- Automatically enter DFU mode with button presses.
-- Replace iOS with AiboOS or guarantee our ARM64 payload boots.
-- Run the unverified AiboOS bootloader or flash your phone.
+NO RUFUS. NO USB STICK. NO WSL. NO EXTRA DOWNLOADS.
+The GUI never calls checkm8, modifies Windows driver bindings, reboots,
+enters DFU, erases a USB disk, or writes any iPhone data. It does not need
+administrator permissions. It doesn't capture unique serials or ECIDs.
 
-YOU NEED A SPARE USB DRIVE (official download recommends 32GB), or other
-bootable removable media. You previously indicated you do not have one.
-You can download and verify everything now, but cannot complete the boot
-without obtaining removable boot media or using a separate Linux/Mac PC.
+IMPORTANT LIMITATIONS (NOT AUTOMATABLE YET)
+- iPhone DFU requires physical button steps or compatible existing device
+  tools; it is not accomplished by this Windows app.
+- There is no phone-verified A9 Linux kernel+drivers+storage installer.
+- The experimental Windows Pongo/checkm8 loader failed during USB operations.
+- Therefore no functional, safe, hands-free AiboOS replacement for iOS exists
+  today. A successful USB scan is NOT an installation.
+- The original ISO/palen1x workflow uses a separate boot environment. It
+  cannot be achieved in this app without removable media or other boot
+  preparation; don't mistake Windows WSL for native Linux USB support.
 
-START:
-1. Extract the ZIP completely.
-2. Double-click AiboOS-Setup.exe.
-3. Click PREPARE EVERYTHING and follow its buttons.
-4. If you have no USB, stop before USB creation and acquire suitable media.
+AiboOS development repository:
+https://github.com/wwoolf21963-dotcom/AiboOS
 
-PRIVACY:
-No telemetry, account logins, driver installation, jailbreak actions,
-and no iPhone access occur in the GUI.
-
-PINNED AND VERIFIED DOWNLOADS:
-palen1x v3.0.0-beta.4 x86_64 ISO
-SHA256 9f47c7d4a8d8824e210a6795cc5cdb22964a0de26298800e8ba7b55953a743f3
-https://github.com/palera1n/palen1x/releases
-Rufus v4.16
-SHA256 8351a56c134aa6dd26a930d702cc3fd57f11ef90b17e55a8de960d5a73d46cfc
-https://github.com/pbatard/rufus/releases
-
-OFFICIAL GUIDES:
-https://docs.palera.in/using-palen1x/
-https://palera.in/download/
-https://rufus.ie/
-
-IMPORTANT:
-palen1x is a Linux environment for palera1n/jailbreaking. It does NOT
-replace iOS with AiboOS. Testing the AiboOS ARM64 Linux kernel on your
-actual SE is a separate unproven next milestone.
-
-This assistant is not affiliated with Apple or palera1n.
-
-
-MODEL + IOS VERSION CHOOSER
----------------------------
-The setup wizard now REQUIRES a phone model and numeric iOS version. The
-only enabled path is first-generation iPhone SE (2016, Apple A9) on iOS
-15.x. All other selections stop with instructions rather than downloading
-an incompatible boot tool. The selection changes the user's preparation
-instructions and is included in the copied test summary.
-This is intentionally conservative: upstream palera1n supports other
-A8-A11 hardware, but AiboOS currently has only an experimental SE A9 kit.
-Neither selection nor download establishes that Linux can boot on the phone.
+This program is for diagnosis/development and is not affiliated with Apple.
