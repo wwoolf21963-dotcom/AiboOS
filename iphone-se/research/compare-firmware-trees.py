@@ -75,7 +75,7 @@ def parse(raw):
     results={}
     # Only standard controller descriptions from public restore images.
     wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage)([-_0-9]|$)",re.I)
-    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size"}
+    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed"}
     def visit(parent,depth):
         nonlocal pos,budget
         budget-=1
@@ -133,4 +133,8 @@ def main():
     report={"source":"Apple iPhone8,4 iOS 15.8.8 (19H422), public restore hardware descriptions","firmware_hashes":{k:v[1] for k,v in BOARDS.items()},"boards":reports,"only_n69":sorted(a.keys()-b.keys()),"only_n69u":sorted(b.keys()-a.keys()),"different_common_nodes":sorted(k for k in a.keys()&b.keys() if a[k]!=b[k]),"limitations":"Static firmware metadata. Not a working driver, not live device data, no controller writes or boot modifications. Register values are raw bytes, not translated Linux device-tree cells."}
     (out/"controller-comparison.json").write_text(json.dumps(report,indent=2)+"\n")
     print("PASS pinned public hardware metadata comparison")
+    for board, nodes in reports.items():
+        for path, props in nodes.items():
+            if "/apcie" in path or "dart-apcie" in path or "nvme-mmu" in path:
+                print(board, path, json.dumps(props, sort_keys=True))
 if __name__=="__main__":main()

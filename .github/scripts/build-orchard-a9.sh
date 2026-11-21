@@ -17,9 +17,11 @@ make -C "$K" ARCH=arm64 LLVM=1 orchard_apple16k_defconfig
   --enable BLK_DEV_INITRD --enable RD_GZIP --enable DEVTMPFS \
   --enable DEVTMPFS_MOUNT --enable EXT4_FS --enable INPUT_EVDEV \
   --enable KEYBOARD_GPIO --enable USB_CONFIGFS_ACM \
-  --enable BLK_DEV_NVME --enable NVME_APPLE
+  --enable PCI --enable PCI_MSI --enable PCIE_APPLE_H9P \
+  --enable APPLE_DART --enable BLK_DEV_NVME --enable NVME_APPLE \
+  --enable NVME_VERBOSE_ERRORS
 make -C "$K" ARCH=arm64 LLVM=1 olddefconfig
-for key in ARM64_16K_PAGES BLK_DEV_INITRD RD_GZIP DEVTMPFS EXT4_FS INPUT_EVDEV KEYBOARD_GPIO; do
+for key in ARM64_16K_PAGES BLK_DEV_INITRD RD_GZIP DEVTMPFS EXT4_FS INPUT_EVDEV KEYBOARD_GPIO PCI PCI_MSI PCIE_APPLE_H9P APPLE_DART BLK_DEV_NVME NVME_CORE NVME_VERBOSE_ERRORS; do
     grep -qx "CONFIG_$key=y" "$K/.config"
 done
 make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 Image.gz dtbs
