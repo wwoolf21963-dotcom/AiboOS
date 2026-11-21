@@ -1,4 +1,4 @@
-name: Build AiboOS Windows DFU Readiness
+name: Build AiboOS Windows DFU Driver Setup
 
 on:
   workflow_dispatch:
@@ -26,6 +26,36 @@ jobs:
         run: |
           dotnet run --project windows-linux-boot-assistant/tests/DeviceProfileTests.csproj -c Release
           if ($LASTEXITCODE -ne 0) { throw "DFU routing tests failed" }
+      - name: Prepare pinned upstream libwdi source and build dependencies
+        shell: pwsh
+        run: |
+          git clone --quiet https://github.com/pbatard/libwdi.git vendor-libwdi
+          git -C vendor-libwdi checkout --quiet 30df0c0e051b0132c4b9ebed8c054bc8eb3aaaec
+          if ((git -C vendor-libwdi rev-parse HEAD) -ne '30df0c0e051b0132c4b9ebed8c054bc8eb3aaaec') {
+            throw "Pinned libwdi revision mismatch"
+          }
+          git -C vendor-libwdi submodule update --init --recursive
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkID=253170' -OutFile wdk-redist.msi
+          Invoke-WebRequest 'https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.0/libusb-win32-bin-1.4.0.0.zip' -OutFile libusb0-redist.zip
+          Invoke-WebRequest 'https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z' -OutFile libusbk-redist.7z
+          $p = Start-Process msiexec.exe -ArgumentList @('/a', 'wdk-redist.msi', '/qn', "TARGETDIR=$((Get-Location).Path)\wdk") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "WDK redist extraction failed: $($p.ExitCode)" }
+          7z x libusb0-redist.zip -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "libusb0 extraction failed" }
+          7z x libusbk-redist.7z -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "libusbK extraction failed" }
+          $l0 = Get-ChildItem -Directory -Filter 'libusb-win32*' | Select-Object -First 1
+          $lk = Get-ChildItem -Directory -Filter 'libusbK*' | Select-Object -First 1
+          if (-not $l0 -or -not $lk) { throw "Missing libwdi build dependencies" }
+          Move-Item $l0.FullName libusb0
+          Move-Item $lk.FullName libusbk
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compile pinned libwdi automated WinUSB helper
+        shell: cmd
+        run: |
+          cd vendor-libwdi
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros="WDK_DIR=../wdk/Windows Kits/8.0;LIBUSB0_DIR=../libusb0;LIBUSBK_DIR=../libusbk/bin"
+          if errorlevel 1 exit /b 1
       - name: Compile Windows x64 self-contained GUI
         shell: pwsh
         run: |
@@ -37,11 +67,32 @@ jobs:
           if (-not (Test-Path dist/aiboos-windows/AiboOS-Setup.exe)) { throw "Missing Windows application" }
           if ((Get-Item dist/aiboos-windows/AiboOS-Setup.exe).Length -lt 1000000) { throw "Invalid executable" }
           Copy-Item windows-linux-boot-assistant/README_FIRST.txt dist/aiboos-windows/README_FIRST.txt
+          Copy-Item windows-linux-boot-assistant/Prepare-DFU-Driver.ps1 dist/aiboos-windows/Prepare-DFU-Driver.ps1
+          $helper = Get-ChildItem -Path vendor-libwdi -Recurse -Filter 'wdi-simple.exe' -File |
+            Where-Object { $_.FullName -match 'Release' -and $_.FullName -match 'x64' } |
+            Select-Object -First 1
+          if (-not $helper) { throw 'libwdi driver installer executable missing' }
+          Copy-Item $helper.FullName dist/aiboos-windows/AiboOS-DFU-Driver-Tool.exe
+          Copy-Item vendor-libwdi/COPYING-LGPL dist/aiboos-windows/LIBWDI-LICENSE.txt
+          Copy-Item vendor-libwdi/COPYING dist/aiboos-windows/LIBWDI-GPL-LICENSE.txt
+          Set-Content dist/aiboos-windows/LIBWDI-SOURCE.txt 'Upstream pbatard/libwdi commit 30df0c0e051b0132c4b9ebed8c054bc8eb3aaaec'
+          if ((Get-Item dist/aiboos-windows/AiboOS-DFU-Driver-Tool.exe).Length -lt 200000) {
+            throw 'Driver helper binary unexpectedly small'
+          }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path dist/aiboos-windows/Prepare-DFU-Driver.ps1).Path,
+            [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw "Driver PowerShell syntax error: $errors" }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File dist/aiboos-windows/Prepare-DFU-Driver.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw 'Driver setup offline self-test failed' }
+          Get-FileHash dist/aiboos-windows/AiboOS-DFU-Driver-Tool.exe -Algorithm SHA256 | Format-List
           Get-FileHash dist/aiboos-windows/AiboOS-Setup.exe -Algorithm SHA256 | Format-List
       - name: Publish DFU readiness GUI — NOT an iOS replacement
         uses: actions/upload-artifact@v4
         with:
-          name: AiboOS-Windows-DFU-Readiness-NOT-iOS-Replacement
+          name: AiboOS-Windows-DFU-Driver-Preparation-NOT-iOS-Replacement
           path: dist/aiboos-windows/
           retention-days: 30
           if-no-files-found: error

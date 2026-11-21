@@ -58,6 +58,7 @@ Get-CimInstance -ClassName Win32_PnPEntity |
     private readonly ComboBox iosChoice = new();
     private readonly Button rescan = new();
     private readonly Button copyReport = new();
+    private readonly Button prepareDriver = new();
     private readonly System.Windows.Forms.Timer refresh = new() { Interval = 20000 };
     private readonly string profileFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -136,16 +137,20 @@ Get-CimInstance -ClassName Win32_PnPEntity |
             "A9 internal-storage installation: NOT AVAILABLE\n" +
             "No flash, driver changes or iOS erasure will be attempted.";
 
-        rescan.SetBounds(22, 663, 192, 44);
-        copyReport.SetBounds(224, 663, 190, 44);
-        StyleButton(rescan, "SCAN DFU NOW", Pink, Background);
+        prepareDriver.SetBounds(22, 663, 253, 44);
+        rescan.SetBounds(286, 663, 171, 44);
+        copyReport.SetBounds(468, 663, 173, 44);
+        StyleButton(prepareDriver, "PREPARE / INSTALL USB DRIVER", Pink, Background);
+        StyleButton(rescan, "SCAN DFU NOW", Surface, White);
         StyleButton(copyReport, "COPY DIAGNOSTIC", Surface, White);
+        prepareDriver.Click += async (_, _) => await PrepareDriverAsync();
         rescan.Click += async (_, _) => await ScanAsync();
         copyReport.Click += (_, _) => Clipboard.SetText(diagnostic);
+        Controls.Add(prepareDriver);
         Controls.Add(rescan);
         Controls.Add(copyReport);
-        AddText(this, "Lightning cable only  •  No Rufus  •  No external USB drive",
-            new Rectangle(432, 665, 550, 40), 10, Muted);
+        AddText(this, "No USB stick  •  No Rufus",
+            new Rectangle(656, 666, 310, 35), 10, Muted);
 
         modelChoice.SelectedIndexChanged += (_, _) => UpdateProfile();
         iosChoice.TextChanged += (_, _) => UpdateProfile();
@@ -214,6 +219,7 @@ Get-CimInstance -ClassName Win32_PnPEntity |
             catch (UnauthorizedAccessException) { }
         }
         UpdateSafetyStatus();
+        UpdateDriverButton();
     }
 
     private void RestoreProfile()
@@ -246,6 +252,108 @@ Get-CimInstance -ClassName Win32_PnPEntity |
                 "Not confirmed / incompatible choice") + "\n" +
             "A9 Linux RAM boot: NOT PHONE-VERIFIED; Windows payload transfer unverified\n" +
             "Permanent iOS replacement: BLOCKED — no verified A9 storage installer.";
+    }
+
+
+    private void UpdateDriverButton()
+    {
+        var dfuCount = usbDevices.Count(x => string.Equals(x.Id, "1227",
+            StringComparison.OrdinalIgnoreCase));
+        bool profileMatches = DeviceProfiles.TryGetLinuxRoute(
+            modelChoice.SelectedItem?.ToString(), iosChoice.Text, out _);
+        prepareDriver.Enabled = !scanning && dfuCount == 1 && profileMatches;
+    }
+
+    private async Task PrepareDriverAsync()
+    {
+        // This is intentionally separate from automatic read-only DFU detection.
+        if (scanning || usbDevices.Count(x => string.Equals(x.Id, "1227", StringComparison.OrdinalIgnoreCase)) != 1 ||
+            !DeviceProfiles.TryGetLinuxRoute(
+                modelChoice.SelectedItem?.ToString(), iosChoice.Text, out _))
+        {
+            MessageBox.Show("Connect exactly one iPhone in DFU and select the A9/iOS 15 research profile first.",
+                "AiboOS DFU driver", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        string message =
+            "AiboOS will prepare the Windows WinUSB driver for Apple DFU (05AC:1227) only.\n\n" +
+            "It first backs up the Apple driver, if present, and requests Windows administrator approval. " +
+            "Changing the Windows DFU driver can temporarily disrupt Apple recovery tools and may require reinstalling the original driver.\n\n" +
+            "THIS DOES NOT INSTALL AIBOOS OR REPLACE IOS. Continue?";
+        if (MessageBox.Show(message, "Approve DFU driver preparation",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        string path = Path.Combine(AppContext.BaseDirectory, "Prepare-DFU-Driver.ps1");
+        if (!File.Exists(path))
+        {
+            MessageBox.Show("Driver helper missing. Extract the COMPLETE setup ZIP before running.",
+                "AiboOS", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        prepareDriver.Enabled = false;
+        rescan.Enabled = false;
+        refresh.Stop();
+        connectionStatus.Text = "Preparing Windows DFU driver…";
+        connectionDetails.Text = "Windows may request administrator approval. No phone firmware is being changed.";
+        try
+        {
+            var result = await Task.Run(async () =>
+            {
+                var info = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                info.ArgumentList.Add("-NoProfile");
+                info.ArgumentList.Add("-ExecutionPolicy");
+                info.ArgumentList.Add("Bypass");
+                info.ArgumentList.Add("-File");
+                info.ArgumentList.Add(path);
+                using var process = Process.Start(info)
+                    ?? throw new IOException("Unable to launch the DFU driver preparation.");
+                // The elevated helper has its own Windows approval and logs to disk.
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(6));
+                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var errors = process.StandardError.ReadToEndAsync(timeout.Token);
+                try { await process.WaitForExitAsync(timeout.Token); }
+                catch (OperationCanceledException)
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    throw new TimeoutException("Driver preparation did not finish within the limit.");
+                }
+                return (process.ExitCode, (await output) + "\n" + (await errors));
+            });
+            string logPath = Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData),
+                "AiboOS", "Driver-Setup-Last-Run.txt");
+            string log = File.Exists(logPath)
+                ? File.ReadAllText(logPath) : result.Item2;
+            diagnostic = "AiboOS DFU driver setup\n" + log + "\n" + diagnostic;
+            await ScanAsync();
+            MessageBox.Show(
+                (result.ExitCode == 0
+                    ? "DFU driver preparation completed.\n\n"
+                    : "DFU driver preparation did not pass verification.\n\n") +
+                (log.Length > 2400 ? log[^2400..] : log) +
+                "\n\nThis is not an iOS replacement or boot test.",
+                "AiboOS USB driver", MessageBoxButtons.OK,
+                result.ExitCode == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Driver preparation stopped",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            refresh.Start();
+            rescan.Enabled = true;
+            UpdateDriverButton();
+        }
     }
 
     private async Task ScanAsync()
@@ -293,6 +401,7 @@ Get-CimInstance -ClassName Win32_PnPEntity |
             UpdateSafetyStatus();
             scanning = false;
             if (!IsDisposed) rescan.Enabled = true;
+            UpdateDriverButton();
         }
     }
 

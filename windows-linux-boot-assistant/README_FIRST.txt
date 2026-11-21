@@ -1,49 +1,47 @@
-AiboOS Windows DFU / Native OS Readiness
-=======================================
-Build 0.4.0 — Windows x64 self-contained GUI.
+AiboOS Windows DFU Driver Preparation — v0.5.0
+==============================================
 
-This is for the NATIVE AiboOS OPERATING SYSTEM project, NOT the iOS IPA app.
-No USB STICK, Rufus, Linux live USB, WSL, IPA, TrollStore or QR-code route.
+THIS IS FOR A REAL NATIVE-OS AIBOOS PROJECT, NOT AN IPA.
+NO USB STICK, RUFUS, WSL, OR LINUX LIVE USB. Keep using the Lightning cable.
 
-What it does automatically when opened:
-- Finds connected Apple USB mode through read-only Windows device enumeration.
-- Clearly distinguishes DFU (05AC:1227), Recovery (1281), normal USB (12A8),
-  and a possible PongoOS USB mode (4141).
-- Displays sanitized driver service info, not ECID/serial/IMEI.
-- Re-scans every 20 seconds.
-- Allows selecting precise iPhone SE generation and last-known iOS version,
-  saving only those choices locally for subsequent sessions.
-- Shows honest boot and installation readiness blockers.
-- Can copy a redacted diagnostic report to the clipboard.
+Open AiboOS-Setup.exe. The application automatically checks Windows for a
+connected iPhone in DFU 05AC:1227, and asks for the exact iPhone model and
+LAST-KNOWN iOS version (DFU mode cannot read installed iOS version).
+If exactly one Apple DFU device is present and the A9/iOS 15 research
+profile is selected, it enables PREPARE / INSTALL USB DRIVER.
 
-The iPhone should be connected by its normal Lightning DATA cable to
-the PC if you want Windows to detect DFU. "NO USB STICK" does not mean
-wireless access to DFU is possible. While the device is in DFU, Windows
-cannot reliably read the installed iOS version or distinguish Samsung
-S8000 from TSMC S8003 using VID/PID alone.
+One-click driver preparation:
+1. The user explicitly approves the operation in AiboOS Setup.
+2. The PowerShell script checks that exactly one device is present in DFU.
+3. If WinUSB/libusbK is already bound, the app skips installation.
+4. If Apple's current DFU driver must be changed, it first exports the
+   original INF and associated files using Microsoft's pnputil.
+5. Windows asks for administrator approval (UAC). Decline to cancel.
+6. A bundled, source-built libwdi wdi-simple helper prepares/installs a
+   WinUSB driver for VID 05AC and PID 1227 only, not the iPhone's normal or
+   Recovery USB interface.
+7. It re-detects and verifies that a compatible driver service is bound.
+   It reports failure rather than claiming success without verification.
 
-The 2016 iPhone SE (Apple A9) has an experimental RAM-only Linux build in
-the repository. It has NOT been verified booting on the actual device.
-The experimental Windows checkm8/Pongo loader has not passed real-hardware
-USB boot verification. Hoolock's documented internal-storage support is
-for A11, not A9. There is no tested A9 full AiboOS image or storage
-installation procedure. Consequently, iOS replacement is BLOCKED.
+Driver helper:
+Upstream https://github.com/pbatard/libwdi, pinned commit
+30df0c0e051b0132c4b9ebed8c054bc8eb3aaaec
+Licensing is in LIBWDI-LICENSE.txt and LIBWDI-GPL-LICENSE.txt.
+Building from a pinned commit does NOT prove compatibility on every PC.
 
-NO AUTOMATIC EXPLOIT OR FLASH: the GUI never changes drivers, resets DFU,
-transfers boot images, writes internal storage, restarts the PC, erases
-iOS, jailbreaks, or claims the OS was replaced. It requires no admin rights.
-Successful DFU detection only means that Windows observed a device in
-that USB mode, not that Linux will boot.
+Changing the Windows USB driver can interfere with Apple Devices/iTunes
+and DFU restore procedures. The original Apple INF backup is stored in
+the user's Downloads/AiboOS-Apple-Driver-Backup folder if required.
+If backup fails, the installer refuses to replace the Apple driver.
+An unknown third-party driver is never automatically replaced.
+Diagnostic log: %LOCALAPPDATA%/AiboOS/Driver-Setup-Last-Run.txt
 
-Next research gates (in order):
-1. Observe DFU and driver capabilities on the actual Windows PC.
-2. Confirm Samsung vs TSMC board using trustworthy hardware diagnostics.
-3. Validate reproducible A9 RAM boot through an appropriately reviewed
-   transfer path, with no storage writes, and collect console logs.
-4. Build and test touchscreen, display, power, storage and recovery support.
-5. Design, review, and verify A9 storage installation with backup/recovery
-   before ever enabling permanent replacement.
+IMPORTANT — NO OPERATING-SYSTEM INSTALLATION YET.
+A driver installation permits Windows USB driver access; it does not
+run checkm8, load PongoOS, boot Linux, provide A9 touchscreen drivers or
+overwrite iOS. The A9 RAM-only kernel package is not phone-boot-verified
+and A9 internal-storage installation has not been verified. An actual
+replacement step remains DISABLED to prevent unrecoverable erasure.
+Do not repeatedly exploit, re-partition, or erase the device as a test.
 
 AiboOS source: https://github.com/wwoolf21963-dotcom/AiboOS
-Upstream Hoolock: https://github.com/HoolockLinux/docs
-This tool is not affiliated with Apple.
