@@ -53,9 +53,9 @@ jobs:
           # turn these paths into invalid C tokens (verified in the prior CI log).
           $configPath = 'vendor-libwdi/msvc/config.h'
           $config = Get-Content $configPath -Raw
-          $config = $config.Replace('"C:/Program Files (x86)/Windows Kits/8.0"', '"../wdk/Windows Kits/8.0"')
-          $config = $config.Replace('"D:/libusb-win32"', '"../libusb0"')
-          $config = $config.Replace('"D:/libusbK/bin"', '"../libusbk/bin"')
+          $config = $config.Replace('"C:/Program Files (x86)/Windows Kits/8.0"', '"../../wdk/Windows Kits/8.0"')
+          $config = $config.Replace('"D:/libusb-win32"', '"../../libusb0"')
+          $config = $config.Replace('"D:/libusbK/bin"', '"../../libusbk/bin"')
           Set-Content $configPath $config -Encoding ascii
       - uses: microsoft/setup-msbuild@v2
       - name: Compile pinned libwdi automated WinUSB helper
