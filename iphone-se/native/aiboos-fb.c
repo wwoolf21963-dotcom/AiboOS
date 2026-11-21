@@ -19,6 +19,11 @@
 #include <time.h>
 #include <sys/wait.h>
 #include <sound/asound.h>
+#include <sys/stat.h>
+#define MINIMP3_ONLY_MP3
+#define MINIMP3_NO_SIMD
+#define MINIMP3_IMPLEMENTATION
+#include "vendor/minimp3.h"
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -112,10 +117,10 @@ static void render(struct screen *s) {
  * touchscreen driver can later provide navigation through the same UI. */
 enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_COUNT };
 enum { ACTION_SILENT, ACTION_DIM, ACTION_HOME, ACTION_OFF, ACTION_COUNT };
-enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_COUNT };
+enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_MP3, TONE_COUNT };
 struct switch_ui { int page, action, sound, position, silent, toast; long long until; };
 static const char *actions[]={"SILENT MODE","DIM UI","OPEN HOME","DISABLED"};
-static const char *sounds[]={"NONE","SOFT CLICK","CHIME"};
+static const char *sounds[]={"NONE","SOFT CLICK","CHIME","CUSTOM MP3"};
 static long long now_ms(void) {
     struct timespec t={0};
     if(clock_gettime(CLOCK_MONOTONIC,&t)<0) return 0;
@@ -206,7 +211,7 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
         {"USB SERIAL","WIFI NOT VERIFIED","TOUCH NOT REQUIRED"},
         {"ARM64 A9","DEVELOPMENT BUILD","NO RAW DISK WRITES"},
         {actions[u->action],"HOME TO CHANGE","VOLUME TO NAVIGATE"},
-        {sounds[u->sound],"HOME TO CHANGE","VOLUME TO NAVIGATE"}
+        {sounds[u->sound],"HOME TO CHANGE",u->sound==TONE_MP3?"LOCAL MP3 FILE":"VOLUME TO NAVIGATE"}
     };
     text(s,16,h/5+14,titles[page],page>=PAGE_SETTINGS?k:k+1,0xffffff);
     int a=h/5+48,step=(h-a-38)/4;if(step<18)step=18;
@@ -241,8 +246,58 @@ static void pcm_exact(struct snd_pcm_hw_params *p,unsigned n,unsigned v){
     struct snd_interval *i=&p->intervals[n-SNDRV_PCM_HW_PARAM_FIRST_INTERVAL];
     i->min=i->max=v;i->integer=1;
 }
-static int play_pcm(int tone){
-    int16_t samples[9600*2];unsigned frames=synth(tone,samples,9600);
+/* Read only an ordinary local file; limit storage, time and decoded length. */
+static unsigned decode_mp3(const char *path,int16_t *out,unsigned cap){
+    int fd=open(path,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
+    if(fd<0)return 0;
+    struct stat st;
+    if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||st.st_size<4||st.st_size>2*1024*1024){close(fd);return 0;}
+    unsigned size=(unsigned)st.st_size,got=0;
+    uint8_t *data=malloc(size);
+    if(!data){close(fd);return 0;}
+    while(got<size){ssize_t n=read(fd,data+got,size-got);if(n<=0)break;got+=(unsigned)n;}
+    close(fd);
+    if(got!=size){free(data);return 0;}
+    mp3dec_t dec;mp3dec_init(&dec);
+    unsigned off=0,total=0;
+    uint64_t phase=0;int previous_rate=0;
+    while(off<size&&total<cap){
+        mp3dec_frame_info_t info={0};
+        int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+        int n=mp3dec_decode_frame(&dec,data+off,(int)(size-off),pcm,&info);
+        if(info.frame_bytes<=0||(unsigned)info.frame_bytes>size-off)break;
+        off+=(unsigned)info.frame_bytes;
+        if(n<=0||info.channels<1||info.channels>2||info.hz<8000||info.hz>48000)continue;
+        if(n>MINIMP3_MAX_SAMPLES_PER_FRAME/info.channels)break;
+        if(previous_rate!=info.hz){phase=0;previous_rate=info.hz;}
+        /* Bounded sample-and-hold resampling to 48 kHz, stereo, at reduced volume. */
+        for(int i=0;i<n&&total<cap;i++){
+            phase+=48000;
+            while(phase>=(unsigned)info.hz&&total<cap){
+                out[2*total]=(int16_t)(pcm[i*info.channels]/6);
+                out[2*total+1]=(int16_t)(pcm[i*info.channels+info.channels-1]/6);
+                total++;phase-=(unsigned)info.hz;
+            }
+        }
+    }
+    free(data);
+    unsigned fade=total<480?total:480;
+    for(unsigned i=0;i<fade;i++){
+        unsigned at=total-fade+i;
+        out[2*at]=(int16_t)((int)out[2*at]*(int)(fade-i)/(int)fade);
+        out[2*at+1]=(int16_t)((int)out[2*at+1]*(int)(fade-i)/(int)fade);
+    }
+    return total;
+}
+static int play_pcm(int tone,int position){
+    int16_t samples[48000*2*2];
+    unsigned frames;
+    if(tone==TONE_MP3){
+        const char *path=position==1?"/var/lib/aiboos/sounds/silent-on.mp3":"/var/lib/aiboos/sounds/silent-off.mp3";
+        frames=decode_mp3(path,samples,96000);
+        if(!frames)frames=decode_mp3("/var/lib/aiboos/sounds/switch.mp3",samples,96000);
+        if(!frames){fputs("AiboOS custom MP3 missing or invalid; using soft click\n",stderr);frames=synth(TONE_CLICK,samples,96000);}
+    }else frames=synth(tone,samples,96000);
     if(!frames)return 0;
     int fd=open("/dev/snd/pcmC0D0p",O_RDWR|O_CLOEXEC);
     if(fd<0)return -1;
@@ -272,11 +327,11 @@ static int play_pcm(int tone){
     close(fd);return done==frames?0:-1;
 }
 static pid_t sound_child;
-static void play_async(int tone){
+static void play_async(int tone,int position){
     if(sound_child>0){if(waitpid(sound_child,NULL,WNOHANG)==0)return;sound_child=0;}
     if(tone==TONE_NONE)return;
     pid_t p=fork();
-    if(p==0){alarm(3);int r=play_pcm(tone);if(r)fputs("AiboOS switch sound: ALSA output unavailable\n",stderr);_exit(r?1:0);}
+    if(p==0){alarm(3);int r=play_pcm(tone,position);if(r)fputs("AiboOS switch sound: ALSA output unavailable\n",stderr);_exit(r?1:0);}
     if(p>0)sound_child=p;
 }
 static int bitset(const unsigned long *bits,unsigned code){
@@ -309,7 +364,7 @@ static int run_ui(struct screen *s) {
                     if(ioctl(fd,EVIOCGKEY(sizeof(state)),state)>=0){
                         int old=u.position;
                         int alert=set_switch(&u,bitset(state,KEY_MUTE),old>=0,now_ms());
-                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound);}
+                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound,u.position);}
                     }
                 }
                 inputs[count++]=(struct pollfd){.fd=fd,.events=POLLIN};
@@ -327,7 +382,7 @@ static int run_ui(struct screen *s) {
                     if(ev.type==EV_KEY&&ev.code==KEY_MUTE&&(ev.value==0||ev.value==1)){
                         int old=u.position;
                         int alert=set_switch(&u,ev.value,1,now_ms());
-                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound);}
+                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound,u.position);}
                         continue;
                     }
                     if(ev.type==EV_KEY&&ev.value==1&&(ev.code==KEY_HOME||ev.code==KEY_HOMEPAGE)){
@@ -336,7 +391,7 @@ static int run_ui(struct screen *s) {
                             publish_silent(&u);save_settings(&u);shell_page(s,&u);continue;
                         }
                         if(u.page==PAGE_SOUND){
-                            u.sound=(u.sound+1)%TONE_COUNT;save_settings(&u);shell_page(s,&u);play_async(u.sound);continue;
+                            u.sound=(u.sound+1)%TONE_COUNT;save_settings(&u);shell_page(s,&u);play_async(u.sound,u.position);continue;
                         }
                     }
                     int next=navigate(u.page,&ev);
@@ -386,6 +441,16 @@ static int selftest(void) {
 }
 int main(int argc, char **argv) {
     if (argc==2 && !strcmp(argv[1],"--selftest")) return selftest();
+    if (argc==3 && !strcmp(argv[1],"--test-mp3")) {
+        int16_t pcm[96000*2];
+        unsigned n=decode_mp3(argv[2],pcm,96000);
+        if(!n||n>96000)return 1;
+        int audible=0;
+        for(unsigned i=0;i<2*n;i++){if(pcm[i])audible=1;if(pcm[i]>5462||pcm[i]<-5462)return 2;}
+        if(!audible)return 3;
+        printf("PASS MP3 decode: %u stereo frames at 48000 Hz\n",n);
+        return 0;
+    }
     if (argc!=2 || (strcmp(argv[1],"--show") && strcmp(argv[1],"--ui"))) {
         fputs("Usage: aiboos-fb --show | --ui | --selftest\n",stderr);
         return 2;

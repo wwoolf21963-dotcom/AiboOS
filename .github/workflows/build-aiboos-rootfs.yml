@@ -19,7 +19,7 @@ jobs:
       - name: Install build and filesystem tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu e2fsprogs qemu-user-static xz-utils
+          sudo apt-get install -y gcc-aarch64-linux-gnu e2fsprogs qemu-user-static xz-utils ffmpeg
       - name: Build native ARM64 persistent filesystem image
         shell: bash
         run: |
@@ -64,6 +64,12 @@ jobs:
           ln -s ../bin/busybox "$FS/sbin/init"
           aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o "$FS/bin/aiboos-fb"
           qemu-aarch64-static "$FS/bin/aiboos-fb" --selftest
+          mkdir -p "$FS/var/lib/aiboos/sounds"
+          ffmpeg -v error -f lavfi -i 'sine=frequency=880:duration=0.35' -ar 44100 -ac 1 -c:a libmp3lame "$TMP/mono.mp3"
+          ffmpeg -v error -f lavfi -i 'sine=frequency=440:duration=2.5' -ar 48000 -ac 2 -c:a libmp3lame "$TMP/stereo.mp3"
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --test-mp3 "$TMP/mono.mp3"
+          qemu-aarch64-static "$FS/bin/aiboos-fb" --test-mp3 "$TMP/stereo.mp3"
+          if qemu-aarch64-static "$FS/bin/aiboos-fb" --test-mp3 "$FS/bin/busybox"; then echo 'Invalid MP3 accepted'; exit 1; fi
           install -m 755 iphone-se/native/aiboos-usb-serial.sh "$FS/bin/aiboos-usb-serial"
           sh -n "$FS/bin/aiboos-usb-serial"
           sh "$FS/bin/aiboos-usb-serial" --selftest
