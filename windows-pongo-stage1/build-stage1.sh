@@ -27,6 +27,8 @@ gcc -std=gnu11 -O2 -Wall -fcommon -DWIN32 -DHAVE_LIBUSB -I./include \
   -lusb-1.0 -o ../dist/native-first-stage/aiboos-pongo-stage1.exe
 cp /ucrt64/bin/libusb-1.0.dll ../dist/native-first-stage/
 cp ../windows-pongo-stage1/Start-Stage1-Diagnostics.cmd ../dist/native-first-stage/
+cp ../windows-pongo-stage1/AiboOS-Windows-Setup.ps1 ../dist/native-first-stage/
+cp ../windows-pongo-stage1/Start-AiboOS-Setup.cmd ../dist/native-first-stage/
 cp ../windows-pongo-stage1/README_FIRST.txt ../dist/native-first-stage/
 printf 'Pinned upstream palera1n/openra1n revision: %s\n' "$UPSTREAM" > ../dist/native-first-stage/UPSTREAM.txt
 ../dist/native-first-stage/aiboos-pongo-stage1.exe --selftest

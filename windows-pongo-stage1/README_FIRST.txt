@@ -49,3 +49,15 @@ The script now calls --test-dfu-access, which only attempts libusb_open and
 libusb_close: no interface claim, exploit, USB command, resets or NAND writes.
 If access is BLOCKED, DO NOT change USB drivers without reviewing the error.
 If it says OK, that proves only open access, not an exploit or Linux boot.
+
+
+AUTOMATED WINDOWS PREPARATION (NEW)
+-----------------------------------
+Run Start-AiboOS-Setup.cmd. It automatically finds an iPhone SE DFU device,
+reports the installed USB driver, backs up the Apple driver if it is still
+present (with Windows UAC approval), and tests libusb_open. It SKIPS driver
+changes when the existing driver works, including a previously installed
+libusbK. If access fails, it stops and points to Zadig for MANUAL approval.
+It does not silently switch system recovery drivers. No exploits, WSL,
+Windows restarts, iOS modifications, internal-storage flashing, or boot.
+Driver installation and replacement need careful review of VID 05AC PID 1227.
