@@ -1,0 +1,37 @@
+name: Test AiboOS installation and restart in ARM64 VM
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-install-lifecycle.yml'
+      - '.github/scripts/test-install-lifecycle.sh'
+permissions:
+  contents: read
+jobs:
+  rootfs:
+    uses: ./.github/workflows/build-aiboos-rootfs.yml
+  lifecycle:
+    needs: rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          path: current-rootfs
+      - name: Install virtual machine and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm git clang lld llvm flex bison bc libssl-dev libelf-dev libncurses-dev dwarves zstd xz-utils cpio e2fsprogs rsync build-essential
+      - name: Install, shut down and restart installed AiboOS
+        run: |
+          bash -n .github/scripts/test-install-lifecycle.sh
+          bash .github/scripts/test-install-lifecycle.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AiboOS-VM-Installation-Lifecycle-Report
+          path: install-lifecycle-report/
+          if-no-files-found: warn
