@@ -1,3 +1,5 @@
+using System;
+
 namespace AiboOS.LinuxBootAssistant;
 
 internal static class DeviceProfiles
@@ -6,46 +8,73 @@ internal static class DeviceProfiles
     public const string Se2020 = "iPhone SE (2020) — A13";
     public const string Se2022 = "iPhone SE (2022) — A15";
 
-    // This only selects the Windows/Linux BOOT PREPARATION route.
-    // It does not claim AiboOS is compatible with or can install on any phone.
+    // Legacy research classification: not a boot or installation guarantee.
     public static bool TryGetLinuxRoute(string? model, string? iosText, out string result)
     {
         if (string.IsNullOrWhiteSpace(model))
         {
-            result = "First select your iPhone model. The SE generations have different chips and boot requirements.";
+            result = "Select a model.";
             return false;
         }
         if (model != Se2016)
         {
-            result = model == Se2020 || model == Se2022
-                ? "STOP: This iPhone SE generation uses A13/A15, not A9. The palen1x/checkm8 boot route in this setup does not support it."
-                : "STOP: This AiboOS Linux boot preparation is not verified for the chosen phone. Select the precise supported model.";
+            result = "STOP: A9 research preparation does not support this iPhone model.";
             return false;
         }
-        if (string.IsNullOrWhiteSpace(iosText))
+        if (!TryParseIOS(iosText, out var version))
         {
-            result = "Enter your installed iOS version, such as 15.8.8. Do not guess or use the phone model as the version.";
+            result = "Enter a numeric iOS version such as 15.8.8.";
             return false;
         }
-        var text = iosText.Trim();
-        if (text.StartsWith("iOS ", StringComparison.OrdinalIgnoreCase)) text = text.Substring(4).Trim();
-        if (!Version.TryParse(text, out var version) || version.Major <= 0 || version.Minor < 0)
+        if (version.Major != 15)
         {
-            result = "Unrecognised iOS version. Use a numeric version such as 15.8.8 (Settings > General > About).";
+            result = "STOP: The experimental A9 iOS 15 preparation route does not support this version.";
             return false;
         }
-        if (version.Major < 15)
+        result = "Research route only. Linux kernel boot and iOS replacement remain unverified.";
+        return true;
+    }
+
+    public static bool TryGetPhoneAppRoute(string? model, string? iosText, out string result)
+    {
+        if (string.IsNullOrWhiteSpace(model) ||
+            model == "Choose your iPhone")
         {
-            result = "STOP: palera1n/palen1x is for iOS 15.0 or later. This selected iOS version requires a different route.";
+            result = "Select your exact iPhone generation. No phone or version is automatically detected without a connection.";
             return false;
         }
-        if (version.Major > 15)
+        if (!TryParseIOS(iosText, out var version))
         {
-            result = "STOP: The 2016 iPhone SE cannot run iOS 16 or later. Check whether you selected the wrong iPhone generation or iOS version.";
+            result = "Select or enter your installed iOS version (for example, 15.8.8).";
             return false;
         }
-        result = "SUPPORTED FOR LINUX USB PREPARATION: " + model + " on iOS " + text
-                 + ". Uses the official palen1x A9/checkm8 research route; AiboOS kernel boot and any permanent iOS replacement remain UNVERIFIED.";
+        if (model != Se2016)
+        {
+            result = "This release is prepared for the 2016 iPhone SE. Other models are not verified. Nothing will be installed.";
+            return false;
+        }
+        if (version.Major != 15)
+        {
+            result = "This iPhone SE AiboOS app build targets iOS 15. Your selection is not a verified match.";
+            return false;
+        }
+        result = "Scan the QR code with your iPhone or open the release link on it. "
+               + "The AiboOS IPA requires a compatible installation method such as TrollStore. "
+               + "It runs INSIDE iOS; it does not replace or remove iOS.";
+        return true;
+    }
+
+    private static bool TryParseIOS(string? iosText, out Version version)
+    {
+        version = new Version(0, 0);
+        if (string.IsNullOrWhiteSpace(iosText)) return false;
+        string value = iosText.Trim();
+        if (value.StartsWith("iOS ", StringComparison.OrdinalIgnoreCase))
+            value = value.Substring(4).Trim();
+        if (!Version.TryParse(value, out var parsed) || parsed.Major <= 0 ||
+            parsed.Minor < 0 || parsed.Build < -1 || parsed.Revision < -1)
+            return false;
+        version = parsed;
         return true;
     }
 }

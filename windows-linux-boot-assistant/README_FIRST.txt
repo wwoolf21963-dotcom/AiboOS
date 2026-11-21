@@ -1,35 +1,32 @@
-AiboOS Windows Auto Readiness (NO USB STICK REQUIRED)
-=====================================================
-Build: 0.2.0 — Windows 11 x64, self-contained GUI.
+AiboOS Cable-Free Setup — Windows
+================================
+Version 0.3.0
 
-HOW IT WORKS
-Double-click AiboOS-Setup.exe. It immediately and automatically:
-- Checks the current Windows Apple USB device mode using Windows CIM.
-- Looks for Apple VID 05AC in DFU (1227), Recovery (1281),
-  normal iOS (12A8) or a PongoOS USB ID (4141).
-- Updates the on-screen connection status every 20 seconds.
-- Warns clearly when full AiboOS installation is NOT AVAILABLE.
-- Lets advanced users optionally select an iPhone generation and iOS version
-  for compatibility notes. Selection is not needed for the automatic scan.
-- Copies a privacy-preserving local report on user request.
+NO USB STICK, NO RUFUS, NO LIGHTNING CABLE, NO WSL OR LINUX BOOT.
 
-NO RUFUS. NO USB STICK. NO WSL. NO EXTRA DOWNLOADS.
-The GUI never calls checkm8, modifies Windows driver bindings, reboots,
-enters DFU, erases a USB disk, or writes any iPhone data. It does not need
-administrator permissions. It doesn't capture unique serials or ECIDs.
+Double-click AiboOS-Setup.exe. This single-window setup:
+1. Asks for your iPhone generation and exact installed iOS version.
+2. Saves the chosen model/version locally for next time.
+3. Checks whether the current AiboOS iPhone app beta is intended for that
+   combination. The model and version are user-entered, not detected.
+4. Shows a QR code to the official GitHub release page, ready for your
+   iPhone Camera to scan, and offers an Open/Copy link.
+5. Does not offer unsafe actions for incompatible selections.
 
-IMPORTANT LIMITATIONS (NOT AUTOMATABLE YET)
-- iPhone DFU requires physical button steps or compatible existing device
-  tools; it is not accomplished by this Windows app.
-- There is no phone-verified A9 Linux kernel+drivers+storage installer.
-- The experimental Windows Pongo/checkm8 loader failed during USB operations.
-- Therefore no functional, safe, hands-free AiboOS replacement for iOS exists
-  today. A successful USB scan is NOT an installation.
-- The original ISO/palen1x workflow uses a separate boot environment. It
-  cannot be achieved in this app without removable media or other boot
-  preparation; don't mistake Windows WSL for native Linux USB support.
+Phone release:
+https://github.com/wwoolf21963-dotcom/AiboOS/releases/tag/aiboos-se-latest
 
-AiboOS development repository:
-https://github.com/wwoolf21963-dotcom/AiboOS
+The release is an iOS app IPA. A compatible on-phone installer such as
+TrollStore must ALREADY be available. Users must explicitly approve any
+installation on the phone. The desktop setup cannot perform that remotely.
 
-This program is for diagnosis/development and is not affiliated with Apple.
+CRITICAL: THIS DOES NOT REPLACE iOS.
+There is no tested permanent AiboOS image or verified A9 storage/boot
+installation procedure for iPhone SE (2016). We will not simulate completion,
+flash the phone, alter Windows drivers, or mislabel an app as an OS.
+No USB enumeration, DFU, PowerShell, admin access, pairing, or download is
+performed by the Windows setup.
+
+The only locally stored preferences are the selected model and version,
+at %LOCALAPPDATA%\AiboOS\setup-profile.json. No device identifiers are read.
+This tool is not affiliated with Apple.
