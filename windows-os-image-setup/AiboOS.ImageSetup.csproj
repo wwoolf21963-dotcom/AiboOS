@@ -10,5 +10,7 @@
   <ItemGroup>
     <EmbeddedResource Include="payload.gz" LogicalName="AiboOS.RootFS.gz" />
     <EmbeddedResource Include="payload.sha256" LogicalName="AiboOS.RootFS.sha256" />
+    <EmbeddedResource Include="native-files.zip" LogicalName="AiboOS.NativeFiles.zip" />
+    <EmbeddedResource Include="native-files.sha256" LogicalName="AiboOS.NativeFiles.sha256" />
   </ItemGroup>
 </Project>

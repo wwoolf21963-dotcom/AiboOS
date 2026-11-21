@@ -19,7 +19,10 @@ internal static class Program
                 var devices = UsbMonitor.Parse("1227|WinUSB\n1227|WinUSB\n4141|libusbK\ninvalid");
                 bool usbPass = devices.Count(UsbMonitor.Dfu) == 2 && devices.Count(UsbMonitor.Pongo) == 1
                     && UsbMonitor.KnownDriver(devices[0]) && !UsbMonitor.KnownDriver(new UsbDevice("1227", "Apple"));
-                return File.Exists(path) && new FileInfo(path).Length == ImageWriter.ImageSize && usbPass ? 0 : 1;
+                using var native = ZipFile.OpenRead(Path.Combine(folder, "AiboOS-Native-Linux.zip"));
+                bool nativePass = new[] { "Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb",
+                    "source/aiboos-fb.c", "source/aiboos-usb-serial.sh" }.All(name => native.GetEntry(name)?.Length > 0);
+                return File.Exists(path) && new FileInfo(path).Length == ImageWriter.ImageSize && usbPass && nativePass ? 0 : 1;
             }
             catch { return 1; }
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
@@ -70,9 +73,36 @@ internal static class ImageWriter
                 if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(input), expected))
                     throw new InvalidDataException("System image failed SHA-256 verification.");
             }
+            SaveNativeFiles(directory);
             File.Move(temp, final, false);
             progress?.Report(100);
             return final;
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
+    private static void SaveNativeFiles(string directory)
+    {
+        string final = Path.Combine(directory, "AiboOS-Native-Linux.zip");
+        string temp = final + "." + Guid.NewGuid().ToString("N") + ".partial";
+        using var reader = new StreamReader(Resource("AiboOS.NativeFiles.sha256"));
+        byte[] expected = Convert.FromHexString(reader.ReadToEnd().Trim());
+        if (expected.Length != 32) throw new InvalidDataException("Invalid native files digest.");
+        try
+        {
+            using (var input = Resource("AiboOS.NativeFiles.zip"))
+            using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                input.CopyTo(output);
+                output.Flush(true);
+            }
+            using (var check = File.OpenRead(temp))
+                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(check), expected))
+                    throw new InvalidDataException("Native Linux files failed SHA-256 verification.");
+            using (var archive = ZipFile.OpenRead(temp))
+                foreach (string name in new[] { "Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb" })
+                    if (archive.GetEntry(name) is not { Length: > 0 })
+                        throw new InvalidDataException("Missing native Linux component: " + name);
+            File.Move(temp, final, false);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
@@ -128,7 +158,7 @@ Get-CimInstance Win32_PnPEntity | Where-Object {
 
 internal sealed class Setup : Form
 {
-    readonly Button build = new() { Text = "Prepare AiboOS system image", Width = 620, Height = 48 };
+    readonly Button build = new() { Text = "Prepare AiboOS ARM64 + native Linux files", Width = 620, Height = 48 };
     readonly Button open = new() { Text = "Open image folder", Width = 300, Height = 38, Enabled = false };
     readonly Button scan = new() { Text = "Refresh USB status", Width = 300, Height = 38 };
     readonly Button driver = new() { Text = "Prepare missing Windows USB driver", Width = 620, Height = 38, Enabled = false };
@@ -203,8 +233,8 @@ internal sealed class Setup : Form
                 string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AiboOS", "Images", Guid.NewGuid().ToString("N"));
                 var report = new Progress<int>(p => progress.Value = Math.Clamp(p, 0, 100));
                 result = await Task.Run(() => ImageWriter.Create(folder, report));
-                SetStep(4, "AiboOS system image — verified and saved", true);
-                state.Text = "Image ready on this PC. Phone storage has not been changed.";
+                SetStep(4, "ARM64 system image + native files — verified", true);
+                state.Text = "ARM64 image and native Linux bundle saved together. Phone storage unchanged.";
                 open.Enabled = true;
             }
             catch (Exception ex)

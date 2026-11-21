@@ -1,6 +1,7 @@
 name: Build AiboOS ARM64 Persistent Root Filesystem
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     branches: [main]
     paths:

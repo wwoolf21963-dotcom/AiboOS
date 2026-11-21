@@ -6,11 +6,16 @@ on:
     paths:
       - '.github/workflows/build-aiboos-image-setup.yml'
       - 'windows-os-image-setup/**'
+      - 'iphone-se/native/**'
+      - '.github/workflows/build-aiboos-rootfs.yml'
 permissions:
   contents: read
   actions: read
 jobs:
+  rootfs:
+    uses: ./.github/workflows/build-aiboos-rootfs.yml
   setup:
+    needs: rootfs
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -21,9 +26,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
-          run-id: 44932594002
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: rootfs-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: AiboOS-iPhone-SE-ARM64-development-kit
+          run-id: 44906030345
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: kernel-artifact
       - uses: actions/download-artifact@v4
         with:
           name: AiboOS-Windows-DFU-Driver-Preparation-NOT-iOS-Replacement
@@ -48,6 +57,37 @@ jobs:
                   dest.write(chunk)
           assert count == 256 * 1024 * 1024
           (out / "payload.sha256").write_text(digest.hexdigest())
+      - name: Package verified native Linux kernel and A9 device trees
+        shell: python
+        run: |
+          import hashlib, pathlib, zipfile, struct, gzip
+          root = pathlib.Path("kernel-artifact")
+          out = pathlib.Path("windows-os-image-setup")
+          expected = {}
+          for line in (root / "SHA256SUMS.txt").read_text().splitlines():
+              checksum, name = line.split(maxsplit=1)
+              expected[name.lstrip("*")] = checksum.lower()
+          names = ["Image.gz", "apple-dtbs/s8000-n69u.dtb", "apple-dtbs/s8003-n69.dtb"]
+          for name in names:
+              data = (root / name).read_bytes()
+              assert data and hashlib.sha256(data).hexdigest() == expected[name], name
+          with gzip.open(root / "Image.gz", "rb") as source:
+              assert source.read(64)[56:60] == b"ARM\x64", "Not an ARM64 kernel Image"
+          for name in names[1:]:
+              data = (root / name).read_bytes()
+              assert len(data) >= 40 and struct.unpack_from(">I", data)[0] == 0xd00dfeed
+              assert struct.unpack_from(">I", data, 4)[0] == len(data)
+          with zipfile.ZipFile(out / "native-files.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for name in names:
+                  z.write(root / name, name)
+              z.write(root / "kernel-commit.txt", "kernel-commit.txt")
+              z.writestr("SHA256SUMS.txt", "".join(expected[name] + "  " + name + "\n" for name in names))
+              for name in ["aiboos-fb.c", "aiboos-usb-serial.sh", "README.md"]:
+                  z.write(pathlib.Path("iphone-se/native") / name, "source/" + name)
+              z.writestr("README.txt", "AiboOS native development files. Kernel from verified earlier build; updated userspace is in the separately embedded filesystem. The kernel and userspace have not been tested together on an iPhone. No phone-flashing or permanent boot mechanism included.\n")
+          with zipfile.ZipFile(out / "native-files.zip") as z:
+              assert z.testzip() is None
+          (out / "native-files.sha256").write_text(hashlib.sha256((out / "native-files.zip").read_bytes()).hexdigest())
       - name: Publish standalone Windows executable
         shell: pwsh
         run: |
