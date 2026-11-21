@@ -16,6 +16,9 @@
 #include <glob.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
+#include <sys/wait.h>
+#include <sound/asound.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -107,7 +110,17 @@ static void render(struct screen *s) {
 }
 /* Volume keys work through the ordinary Linux evdev interface. A real
  * touchscreen driver can later provide navigation through the same UI. */
-enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_COUNT };
+enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_COUNT };
+enum { ACTION_SILENT, ACTION_DIM, ACTION_HOME, ACTION_OFF, ACTION_COUNT };
+enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_COUNT };
+struct switch_ui { int page, action, sound, position, silent, toast; long long until; };
+static const char *actions[]={"SILENT MODE","DIM UI","OPEN HOME","DISABLED"};
+static const char *sounds[]={"NONE","SOFT CLICK","CHIME"};
+static long long now_ms(void) {
+    struct timespec t={0};
+    if(clock_gettime(CLOCK_MONOTONIC,&t)<0) return 0;
+    return (long long)t.tv_sec*1000+t.tv_nsec/1000000;
+}
 static int navigate(int page, const struct input_event *ev) {
     if (ev->type != EV_KEY || ev->value != 1) return page;
     switch (ev->code) {
@@ -117,72 +130,221 @@ static int navigate(int page, const struct input_event *ev) {
         default: return page;
     }
 }
-static void shell_page(struct screen *s, int page) {
-    int w=(int)s->w, h=(int)s->h;
-    int k=w>=600?3:2;
-    rect(s,0,0,w,h,0x191328);
-    rect(s,0,0,w,h/5,0x503058);
+static void publish_silent(const struct switch_ui *u) {
+    /* AiboOS alert policy, not a claim that the hardware mixer is working. */
+    FILE *f=fopen("/run/aiboos-silent","w");
+    if(f){fprintf(f,"%d\n",u->silent);fclose(f);}
+}
+static void load_settings(struct switch_ui *u) {
+    FILE *f=fopen("/var/lib/aiboos/switch.conf","r");
+    int a,b;
+    if(f){if(fscanf(f,"%d %d",&a,&b)==2 && a>=0 && a<ACTION_COUNT && b>=0 && b<TONE_COUNT){u->action=a;u->sound=b;}fclose(f);}
+}
+static void save_settings(const struct switch_ui *u) {
+    FILE *f=fopen("/var/lib/aiboos/switch.conf.new","w");
+    if(f){int ok=fprintf(f,"%d %d\n",u->action,u->sound)>0; if(fclose(f)==0 && ok) (void)rename("/var/lib/aiboos/switch.conf.new","/var/lib/aiboos/switch.conf");}
+}
+static int set_switch(struct switch_ui *u,int position,int notify,long long time) {
+    if(position!=0 && position!=1) return 0;
+    if(u->position==position) return 0;
+    u->position=position;
+    u->silent=(u->action==ACTION_SILENT && position);
+    if(notify && u->action!=ACTION_OFF){
+        if(u->action==ACTION_HOME && position) u->page=PAGE_HOME;
+        u->toast=1;u->until=time+2300;
+        return 1;
+    }
+    return 0;
+}
+static void circle(struct screen *s,int cx,int cy,int r,uint32_t color){
+    for(int y=-r;y<=r;y++)for(int x=-r;x<=r;x++)
+        if(x*x+y*y<=r*r)pixel(s,cx+x,cy+y,color);
+}
+static void pill(struct screen *s,int x,int y,int w,int h,uint32_t color){
+    int r=h/2;
+    rect(s,x+r,y,w-2*r,h,color);
+    circle(s,x+r,y+r,r,color);circle(s,x+w-r-1,y+r,r,color);
+}
+static void bell(struct screen *s,int x,int y,int k,uint32_t color,int slash){
+    /* Compact, original bell silhouette with clapper and optional strike. */
+    circle(s,x+5*k,y+5*k,4*k,color);
+    rect(s,x+k,y+5*k,9*k,5*k,color);
+    rect(s,x,y+10*k,11*k,2*k,color);
+    circle(s,x+5*k,y+14*k,k,color);
+    if(slash)for(int i=0;i<15*k;i++){
+        rect(s,x-2*k+i,y+i,2*k,2*k,0x08070b);
+        rect(s,x-3*k+i,y+i, k,k,color);
+    }
+}
+static void island(struct screen *s,const struct switch_ui *u){
+    if(!u->toast)return;
+    int w=(int)s->w,k=w>=400?3:2;
+    int pw=(w>=400?290:216);if(pw>w-12)pw=w-12;
+    int ph=23*k,x=(w-pw)/2,y=8;
+    uint32_t color=u->action==ACTION_SILENT && u->position?0xff455d:0xffffff;
+    const char *label;
+    if(u->action==ACTION_SILENT)label=u->position?"SILENT ON":"SILENT OFF";
+    else if(u->action==ACTION_DIM)label=u->position?"DIM ON":"DIM OFF";
+    else label=u->position?"HOME":"SWITCH OFF";
+    pill(s,x,y,pw,ph,0x08070b);
+    bell(s,x+3*k,y+4*k,k,color,u->action==ACTION_SILENT && u->position);
+    int ts=w>=400?3:2;
+    text(s,x+18*k,y+(ph-7*ts)/2,label,ts,color);
+}
+static void shell_page(struct screen *s,const struct switch_ui *u) {
+    int w=(int)s->w,h=(int)s->h,k=w>=600?3:2,page=u->page;
+    uint32_t bg=(u->action==ACTION_DIM && u->position==1)?0x08060c:0x191328;
+    rect(s,0,0,w,h,bg);
+    rect(s,0,0,w,h/5,bg==0x08060c?0x201326:0x503058);
     rect(s,0,h/5-4,w,4,0xff91c1);
     int brand_scale=w>=400?5:3;
     text(s,16,18,"AIBOOS",brand_scale,0xff91c1);
     text(s,18+36*brand_scale,18,"TM",2,0xff91c1);
-    const char *titles[]={"HOME","CONNECTION","SYSTEM"};
+    const char *titles[]={"HOME","CONNECTION","SYSTEM","SWITCH SETTINGS","SWITCH SOUND"};
     const char *lines[][3]={
-        {"NATIVE LINUX","VOLUME KEYS TO MOVE","HOME TO RETURN"},
+        {"NATIVE LINUX","VOLUME KEYS TO MOVE",u->silent?"SILENT ON":u->position<0?"SWITCH UNKNOWN":"SILENT OFF"},
         {"USB SERIAL","WIFI NOT VERIFIED","TOUCH NOT REQUIRED"},
-        {"ARM64 A9","DEVELOPMENT BUILD","NO DISK WRITES"}
+        {"ARM64 A9","DEVELOPMENT BUILD","NO RAW DISK WRITES"},
+        {actions[u->action],"HOME TO CHANGE","VOLUME TO NAVIGATE"},
+        {sounds[u->sound],"HOME TO CHANGE","VOLUME TO NAVIGATE"}
     };
-    text(s,16,h/5+14,titles[page],k+1,0xffffff);
-    int a=h/5+48, step=(h-a-38)/4;
-    if (step<18) step=18;
+    text(s,16,h/5+14,titles[page],page>=PAGE_SETTINGS?k:k+1,0xffffff);
+    int a=h/5+48,step=(h-a-38)/4;if(step<18)step=18;
     for(int i=0;i<3;i++){
-        rect(s,12,a+i*step,w-24,step-3,0x332440);
+        rect(s,12,a+i*step,w-24,step-3,bg==0x08060c?0x15101c:0x332440);
         text(s,20,a+i*step+5,lines[page][i],w>=600?3:2,0xffc2df);
     }
-    for(int i=0;i<PAGE_COUNT;i++)
-        rect(s,w/2-25+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
+    for(int i=0;i<PAGE_COUNT;i++)rect(s,w/2-43+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
+    island(s,u);
+}
+/* Small local tone synthesizer. Playback is optional native ALSA PCM.
+ * No mixer controls, external files, network or sound driver bypass. */
+static unsigned synth(int tone,int16_t *out,unsigned cap) {
+    unsigned frames=tone==TONE_CLICK?2880:tone==TONE_CHIME?9600:0;
+    if(frames>cap)frames=cap;
+    for(unsigned i=0;i<frames;i++){
+        unsigned hz=tone==TONE_CLICK?760:(i<frames/2?880:1320);
+        unsigned p=(i*hz)%48000u;
+        int wave=p<24000u?(int)p-12000:36000-(int)p;
+        unsigned attack=i<240?i:240,left=frames-i;
+        unsigned env=left<1200?left:1200;
+        int16_t sample=(int16_t)((int64_t)wave*attack*env/(240LL*1200*7));
+        out[2*i]=out[2*i+1]=sample;
+    }
+    return frames;
+}
+static void pcm_mask(struct snd_pcm_hw_params *p,unsigned n,unsigned bit){
+    struct snd_mask *m=&p->masks[n-SNDRV_PCM_HW_PARAM_FIRST_MASK];
+    memset(m,0,sizeof(*m));m->bits[bit/32]=1u<<(bit%32);
+}
+static void pcm_exact(struct snd_pcm_hw_params *p,unsigned n,unsigned v){
+    struct snd_interval *i=&p->intervals[n-SNDRV_PCM_HW_PARAM_FIRST_INTERVAL];
+    i->min=i->max=v;i->integer=1;
+}
+static int play_pcm(int tone){
+    int16_t samples[9600*2];unsigned frames=synth(tone,samples,9600);
+    if(!frames)return 0;
+    int fd=open("/dev/snd/pcmC0D0p",O_RDWR|O_CLOEXEC);
+    if(fd<0)return -1;
+    struct snd_pcm_hw_params p={0};
+    for(size_t i=0;i<sizeof(p.masks)/sizeof(p.masks[0]);i++)memset(&p.masks[i],0xff,sizeof(p.masks[i]));
+    for(size_t i=0;i<sizeof(p.intervals)/sizeof(p.intervals[0]);i++)p.intervals[i].max=~0u;
+    p.rmask=~0u;
+    pcm_mask(&p,SNDRV_PCM_HW_PARAM_ACCESS,SNDRV_PCM_ACCESS_RW_INTERLEAVED);
+    pcm_mask(&p,SNDRV_PCM_HW_PARAM_FORMAT,SNDRV_PCM_FORMAT_S16_LE);
+    pcm_mask(&p,SNDRV_PCM_HW_PARAM_SUBFORMAT,SNDRV_PCM_SUBFORMAT_STD);
+    pcm_exact(&p,SNDRV_PCM_HW_PARAM_CHANNELS,2);
+    pcm_exact(&p,SNDRV_PCM_HW_PARAM_RATE,48000);
+    pcm_exact(&p,SNDRV_PCM_HW_PARAM_PERIOD_SIZE,480);
+    pcm_exact(&p,SNDRV_PCM_HW_PARAM_BUFFER_SIZE,1920);
+    if(ioctl(fd,SNDRV_PCM_IOCTL_HW_PARAMS,&p)<0){close(fd);return -1;}
+    struct snd_pcm_sw_params sw={0};
+    sw.period_step=1;sw.avail_min=480;sw.start_threshold=480;sw.stop_threshold=1920;sw.xfer_align=1;
+    sw.boundary=1920;while(sw.boundary<(1UL<<30))sw.boundary*=2;
+    if(ioctl(fd,SNDRV_PCM_IOCTL_SW_PARAMS,&sw)<0||ioctl(fd,SNDRV_PCM_IOCTL_PREPARE)<0){close(fd);return -1;}
+    unsigned done=0;
+    while(done<frames){
+        struct snd_xferi x={.buf=samples+2*done,.frames=frames-done};
+        if(ioctl(fd,SNDRV_PCM_IOCTL_WRITEI_FRAMES,&x)<0||x.result<=0||(unsigned long)x.result>frames-done)break;
+        done+=(unsigned)x.result;
+    }
+    if(done==frames)(void)ioctl(fd,SNDRV_PCM_IOCTL_DRAIN);
+    close(fd);return done==frames?0:-1;
+}
+static pid_t sound_child;
+static void play_async(int tone){
+    if(sound_child>0){if(waitpid(sound_child,NULL,WNOHANG)==0)return;sound_child=0;}
+    if(tone==TONE_NONE)return;
+    pid_t p=fork();
+    if(p==0){alarm(3);int r=play_pcm(tone);if(r)fputs("AiboOS switch sound: ALSA output unavailable\n",stderr);_exit(r?1:0);}
+    if(p>0)sound_child=p;
+}
+static int bitset(const unsigned long *bits,unsigned code){
+    unsigned width=sizeof(unsigned long)*8;
+    return (bits[code/width]>>(code%width))&1UL;
 }
 static volatile sig_atomic_t stopped;
 static void stop_ui(int sig) { (void)sig; stopped=1; }
 static int run_ui(struct screen *s) {
     struct pollfd inputs[48];
     unsigned count=0;
-    int page=PAGE_HOME;
-    signal(SIGTERM,stop_ui);
-    signal(SIGINT,stop_ui);
-    shell_page(s,page);
+    struct switch_ui u={.page=PAGE_HOME,.action=ACTION_SILENT,.sound=TONE_NONE,.position=-1};
+    load_settings(&u);publish_silent(&u);
+    signal(SIGTERM,stop_ui);signal(SIGINT,stop_ui);
+    shell_page(s,&u);
     while(!stopped) {
-        /* Re-enumerate regularly: Linux may register gpio-keys late. */
         glob_t devices={0};
-        if (glob("/dev/input/event*",0,NULL,&devices)==0) {
+        if(glob("/dev/input/event*",0,NULL,&devices)==0){
             for(size_t i=0;i<devices.gl_pathc && count<48;i++){
                 int fd=open(devices.gl_pathv[i],O_RDONLY|O_NONBLOCK|O_CLOEXEC);
-                if(fd<0) continue;
+                if(fd<0)continue;
                 unsigned long bits[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
-                unsigned int width=sizeof(unsigned long)*8;
-                if(ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)<0 ||
-                   !((bits[KEY_VOLUMEUP/width]>>(KEY_VOLUMEUP%width))&1UL ||
-                     (bits[KEY_VOLUMEDOWN/width]>>(KEY_VOLUMEDOWN%width))&1UL ||
-                     (bits[KEY_HOME/width]>>(KEY_HOME%width))&1UL ||
-                     (bits[KEY_UP/width]>>(KEY_UP%width))&1UL ||
-                     (bits[KEY_DOWN/width]>>(KEY_DOWN%width))&1UL)) { close(fd); continue; }
+                if(ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)<0||
+                   !(bitset(bits,KEY_VOLUMEUP)||bitset(bits,KEY_VOLUMEDOWN)||bitset(bits,KEY_HOME)||
+                     bitset(bits,KEY_HOMEPAGE)||bitset(bits,KEY_UP)||bitset(bits,KEY_DOWN)||bitset(bits,KEY_MUTE))){
+                    close(fd);continue;
+                }
+                if(bitset(bits,KEY_MUTE)){
+                    unsigned long state[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
+                    if(ioctl(fd,EVIOCGKEY(sizeof(state)),state)>=0){
+                        int old=u.position;
+                        int alert=set_switch(&u,bitset(state,KEY_MUTE),old>=0,now_ms());
+                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound);}
+                    }
+                }
                 inputs[count++]=(struct pollfd){.fd=fd,.events=POLLIN};
             }
         }
         globfree(&devices);
-        /* Keep existing fds open for a short interval, then refresh detection. */
-        for (int tick=0;tick<10 && !stopped;tick++){
+        for(int tick=0;tick<10&&!stopped;tick++){
             int ready=poll(inputs,count,250);
-            if(ready<0 && errno!=EINTR) break;
-            for(unsigned i=0;i<count;i++) if(inputs[i].revents&POLLIN){
+            if(ready<0&&errno!=EINTR)break;
+            if(u.toast&&now_ms()>=u.until){u.toast=0;shell_page(s,&u);}
+            if(sound_child>0&&waitpid(sound_child,NULL,WNOHANG)!=0)sound_child=0;
+            for(unsigned i=0;i<count;i++)if(inputs[i].revents&POLLIN){
                 struct input_event ev;
                 while(read(inputs[i].fd,&ev,sizeof(ev))==(ssize_t)sizeof(ev)){
-                    int next=navigate(page,&ev);
-                    if(next!=page){page=next;shell_page(s,page);}
+                    if(ev.type==EV_KEY&&ev.code==KEY_MUTE&&(ev.value==0||ev.value==1)){
+                        int old=u.position;
+                        int alert=set_switch(&u,ev.value,1,now_ms());
+                        if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound);}
+                        continue;
+                    }
+                    if(ev.type==EV_KEY&&ev.value==1&&(ev.code==KEY_HOME||ev.code==KEY_HOMEPAGE)){
+                        if(u.page==PAGE_SETTINGS){
+                            u.action=(u.action+1)%ACTION_COUNT;u.silent=(u.action==ACTION_SILENT&&u.position==1);u.toast=0;
+                            publish_silent(&u);save_settings(&u);shell_page(s,&u);continue;
+                        }
+                        if(u.page==PAGE_SOUND){
+                            u.sound=(u.sound+1)%TONE_COUNT;save_settings(&u);shell_page(s,&u);play_async(u.sound);continue;
+                        }
+                    }
+                    int next=navigate(u.page,&ev);
+                    if(next!=u.page){u.page=next;shell_page(s,&u);}
                 }
             }
         }
-        for(unsigned i=0;i<count;i++) close(inputs[i].fd);
+        for(unsigned i=0;i<count;i++)close(inputs[i].fd);
         count=0;
     }
     return 0;
@@ -202,11 +364,24 @@ static int selftest(void) {
     ev.value=2;
     if(navigate(PAGE_CONNECTION,&ev)!=PAGE_CONNECTION) return 5;
     ev.value=1;ev.code=KEY_VOLUMEDOWN;
-    if(navigate(PAGE_HOME,&ev)!=PAGE_SYSTEM) return 6;
+    if(navigate(PAGE_HOME,&ev)!=PAGE_SOUND) return 6;
     ev.code=KEY_HOME;
     if(navigate(PAGE_SYSTEM,&ev)!=PAGE_HOME) return 7;
-    for(int page=0;page<PAGE_COUNT;page++) shell_page(&s,page);
-    puts("PASS AiboOS native framebuffer and evdev navigation offline tests.");
+    struct switch_ui u={.position=-1,.action=ACTION_SILENT,.sound=TONE_CLICK};
+    if(set_switch(&u,0,0,0)||u.silent||u.toast) return 8;
+    if(!set_switch(&u,1,1,100)||!u.silent||!u.toast||u.until!=2400) return 9;
+    if(set_switch(&u,1,1,101)) return 10;
+    for(int page=0;page<PAGE_COUNT;page++){u.page=page;shell_page(&s,&u);}
+    if(!set_switch(&u,0,1,500)||u.silent) return 11;
+    shell_page(&s,&u);
+    u.action=ACTION_OFF;u.toast=0;
+    if(set_switch(&u,1,1,100)||u.silent||u.toast) return 12;
+    int16_t audio[9600*2];
+    if(synth(TONE_NONE,audio,9600)!=0||synth(TONE_CLICK,audio,9600)!=2880||synth(TONE_CHIME,audio,9600)!=9600) return 13;
+    int nonzero=0;
+    for(unsigned i=0;i<9600*2;i++){if(audio[i]>2000||audio[i]<-2000)return 14;if(audio[i])nonzero=1;}
+    if(!nonzero)return 15;
+    puts("PASS AiboOS native framebuffer, mute switch, settings and tone synthesis offline tests.");
     return 0;
 }
 int main(int argc, char **argv) {
