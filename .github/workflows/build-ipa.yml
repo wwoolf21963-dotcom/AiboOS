@@ -1,8 +1,6 @@
 name: Build AiboOS IPA for TrollStore
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: write
