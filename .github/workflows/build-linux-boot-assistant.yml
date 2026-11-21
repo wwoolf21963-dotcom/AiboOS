@@ -21,6 +21,11 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Validate iPhone model and iOS version routing
+        shell: pwsh
+        run: |
+          dotnet run --project windows-linux-boot-assistant/tests/DeviceProfileTests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Device/iOS routing tests failed" }
       - name: Compile Windows x64 self-contained GUI
         shell: pwsh
         run: |

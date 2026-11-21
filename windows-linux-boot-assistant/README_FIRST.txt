@@ -54,3 +54,15 @@ replace iOS with AiboOS. Testing the AiboOS ARM64 Linux kernel on your
 actual SE is a separate unproven next milestone.
 
 This assistant is not affiliated with Apple or palera1n.
+
+
+MODEL + IOS VERSION CHOOSER
+---------------------------
+The setup wizard now REQUIRES a phone model and numeric iOS version. The
+only enabled path is first-generation iPhone SE (2016, Apple A9) on iOS
+15.x. All other selections stop with instructions rather than downloading
+an incompatible boot tool. The selection changes the user's preparation
+instructions and is included in the copied test summary.
+This is intentionally conservative: upstream palera1n supports other
+A8-A11 hardware, but AiboOS currently has only an experimental SE A9 kit.
+Neither selection nor download establishes that Linux can boot on the phone.

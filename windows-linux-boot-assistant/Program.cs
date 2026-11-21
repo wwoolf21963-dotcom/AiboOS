@@ -40,10 +40,12 @@ internal sealed class SetupWindow : Form
     private static readonly Color White = Color.FromArgb(252, 246, 255);
     private readonly string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "AiboOS-Linux-Boot");
     private readonly HttpClient client = new() { Timeout = TimeSpan.FromMinutes(7) };
-    private readonly string[] steps = { "Welcome", "Check Windows", "Download Linux + Rufus", "Create bootable USB", "Boot Linux", "iPhone SE DFU guide", "Progress / next steps" };
-    private readonly Button[] stepButtons = new Button[7];
+    private readonly string[] steps = { "Welcome", "Choose iPhone + iOS", "Check Windows", "Download Linux + Rufus", "Create bootable USB", "Boot Linux", "iPhone SE DFU guide", "Progress / next steps" };
+    private readonly Button[] stepButtons = new Button[8];
     private readonly Label headline = new(), subtitle = new(), status = new();
     private readonly RichTextBox body = new();
+    private readonly ComboBox modelChoice = new(), iosChoice = new();
+    private readonly Label modelLabel = new(), iosLabel = new(), compatibilityLabel = new();
     private readonly ProgressBar progress = new();
     private readonly Button primary = new(), secondary = new(), back = new(), next = new();
     private int currentStep;
@@ -93,7 +95,7 @@ internal sealed class SetupWindow : Form
             {
                 Text = $"{i + 1:00}   {steps[i]}",
                 TextAlign = ContentAlignment.MiddleLeft,
-                Bounds = new Rectangle(12, 62 + i * 56, 244, 46),
+                Bounds = new Rectangle(12, 60 + i * 49, 244, 41),
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = White,
                 BackColor = Surface,
@@ -101,7 +103,13 @@ internal sealed class SetupWindow : Form
                 Cursor = Cursors.Hand
             };
             b.FlatAppearance.BorderSize = 0;
-            b.Click += (_, _) => { if (!busy) { currentStep = index; RefreshStep(); } };
+            b.Click += (_, _) =>
+            {
+                if (busy) return;
+                if (index > 1 && !CheckSelectedDevice(true)) { currentStep = 1; RefreshStep(); return; }
+                currentStep = index;
+                RefreshStep();
+            };
             nav.Controls.Add(b);
             stepButtons[i] = b;
         }
@@ -119,6 +127,40 @@ internal sealed class SetupWindow : Form
         body.BackColor = Surface; body.ForeColor = White;
         body.Font = new Font("Segoe UI", 11); body.ScrollBars = RichTextBoxScrollBars.Vertical;
         card.Controls.Add(body);
+        modelLabel.Text = "YOUR IPHONE MODEL";
+        modelLabel.Bounds = new Rectangle(30, 145, 320, 25);
+        modelLabel.ForeColor = Pink; modelLabel.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        iosLabel.Text = "INSTALLED IOS VERSION";
+        iosLabel.Bounds = new Rectangle(370, 145, 325, 25);
+        iosLabel.ForeColor = Pink; iosLabel.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        modelChoice.Bounds = new Rectangle(30, 174, 324, 36);
+        modelChoice.Font = new Font("Segoe UI", 11);
+        modelChoice.DropDownStyle = ComboBoxStyle.DropDownList;
+        modelChoice.Items.AddRange(new object[]
+        {
+            DeviceProfiles.Se2016, DeviceProfiles.Se2020, DeviceProfiles.Se2022, "Other / not listed"
+        });
+        iosChoice.Bounds = new Rectangle(370, 174, 345, 36);
+        iosChoice.Font = new Font("Segoe UI", 11);
+        iosChoice.DropDownStyle = ComboBoxStyle.DropDown;
+        iosChoice.Items.AddRange(new object[]
+        {
+            "15.8.8", "15.8.7", "15.8.6", "15.8.5", "15.8.4", "15.8.3",
+            "15.8.2", "15.8.1", "15.8", "15.7", "15.6", "15.5",
+            "15.4", "15.3", "15.2", "15.1", "15.0", "14.8.1", "16.0"
+        });
+        compatibilityLabel.Bounds = new Rectangle(30, 238, 680, 114);
+        compatibilityLabel.ForeColor = Muted;
+        compatibilityLabel.Font = new Font("Segoe UI", 10);
+        compatibilityLabel.Text = "Select your iPhone model and type or choose the exact iOS version.\nOnly verified preparation routes become available.\nThis cannot install an AiboOS replacement operating system.";
+        modelChoice.SelectedIndexChanged += (_, _) => UpdateCompatibilityPreview();
+        iosChoice.SelectedIndexChanged += (_, _) => UpdateCompatibilityPreview();
+        iosChoice.TextChanged += (_, _) => UpdateCompatibilityPreview();
+        card.Controls.Add(modelLabel);
+        card.Controls.Add(iosLabel);
+        card.Controls.Add(modelChoice);
+        card.Controls.Add(iosChoice);
+        card.Controls.Add(compatibilityLabel);
         progress.Location = new Point(30, 365); progress.Size = new Size(684, 15);
         progress.Style = ProgressBarStyle.Continuous;
         card.Controls.Add(progress);
@@ -135,7 +177,13 @@ internal sealed class SetupWindow : Form
         StyleButton(back, Surface, White); StyleButton(next, Purple, White);
         back.Text = "← Previous"; next.Text = "Next →";
         back.Click += (_, _) => { if (!busy && currentStep > 0) { currentStep--; RefreshStep(); } };
-        next.Click += (_, _) => { if (!busy && currentStep < steps.Length - 1) { currentStep++; RefreshStep(); } };
+        next.Click += (_, _) =>
+        {
+            if (busy || currentStep >= steps.Length - 1) return;
+            if (currentStep >= 1 && !CheckSelectedDevice(true)) { currentStep = 1; RefreshStep(); return; }
+            currentStep++;
+            RefreshStep();
+        };
         Controls.Add(back); Controls.Add(next);
 
         status.Bounds = new Rectangle(455, 664, 454, 44);
@@ -182,8 +230,10 @@ internal sealed class SetupWindow : Form
     {
         var contents = new (string title, string subtitle, string text, string action, string other)[]
         {
-            ("AiboOS Linux boot preparation", "Built for your iPhone SE (2016) + Windows 11",
+            ("AiboOS Linux boot preparation", "First choose your iPhone generation and exact iOS version",
              "We'll prepare a proper Linux boot environment on your Windows PC, without WSL or a virtual machine.\n\n• Prepare verified palen1x Linux ISO and Rufus.\n• You approve any USB erase and PC restart.\n• Follow guided DFU and Linux steps.\n\nIMPORTANT: palen1x is an upstream jailbreak/boot research environment. It does NOT replace iOS or install a native AiboOS image.", "PREPARE EVERYTHING", "What do I need?"),
+            ("Choose your iPhone + iOS", "Version selection protects against incompatible boot methods",
+             "Select your iPhone model and exact iOS version. The Windows/Linux preparation path only supports an iPhone SE (2016) on iOS 15.x. Other selections are blocked until an appropriate pathway is verified.\n\nChoosing a device does not install or boot AiboOS.", "CONFIRM DEVICE", "HOW DO I CHECK?"),
             ("Check your Windows PC", "First check: can this PC boot a Linux USB?",
              "This assistant runs on Windows x64. It checks your PC architecture and looks for removable drives.\n\nYou need a spare bootable USB drive (the official palera1n download page recommends 32 GB), or another supported boot medium. It will be erased in Rufus only after you approve.\n\nNo USB drive? You can still download everything now, but you cannot complete the boot step until you have suitable removable media.", "CHECK THIS PC", "Get the tools"),
             ("Download Linux + Rufus", "Pinned official downloads with SHA-256 verification",
@@ -201,6 +251,14 @@ internal sealed class SetupWindow : Form
         headline.Text = step.title;
         subtitle.Text = step.subtitle;
         body.Text = step.text;
+        var choosing = currentStep == 1;
+        body.Visible = !choosing;
+        modelChoice.Visible = iosChoice.Visible = choosing;
+        modelLabel.Visible = iosLabel.Visible = compatibilityLabel.Visible = choosing;
+        if (choosing) UpdateCompatibilityPreview();
+        else if (currentStep > 1 && modelChoice.SelectedItem is string chosen)
+            body.Text += "\n\nSelected: " + chosen + ", iOS " + iosChoice.Text.Trim()
+                + ". This is Linux USB preparation, not a verified AiboOS boot.";
         primary.Text = step.action; secondary.Text = step.other;
         back.Enabled = currentStep > 0 && !busy;
         next.Enabled = currentStep < steps.Length - 1 && !busy;
@@ -212,6 +270,27 @@ internal sealed class SetupWindow : Form
         }
     }
 
+    private void UpdateCompatibilityPreview()
+    {
+        var model = modelChoice.SelectedItem as string;
+        var ios = iosChoice.Text.Trim();
+        var supported = DeviceProfiles.TryGetLinuxRoute(model, ios, out var message);
+        compatibilityLabel.ForeColor = supported ? Color.FromArgb(137, 239, 178) : Pink;
+        compatibilityLabel.Text = message +
+            "\n\nThe selected profile changes which steps are enabled. "
+            + "AiboOS itself has NOT been demonstrated booting or replacing iOS.";
+    }
+
+    private bool CheckSelectedDevice(bool showDialog)
+    {
+        var ok = DeviceProfiles.TryGetLinuxRoute(modelChoice.SelectedItem as string,
+                                                 iosChoice.Text, out var message);
+        if (!ok && showDialog)
+            MessageBox.Show(message + "\n\nThe app will not download or launch an unverified boot method.",
+                "Device not eligible for this route", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return ok;
+    }
+
     private void SetStatus(string text)
     {
         status.Text = text.Length > 80 ? text[..77] + "..." : text;
@@ -221,12 +300,14 @@ internal sealed class SetupWindow : Form
     {
         switch (currentStep)
         {
-            case 0: case 2: await DownloadAllAsync(); break;
-            case 1: CheckPc(); break;
-            case 3: await LaunchRufusAsync(); break;
-            case 4: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
-            case 5: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
-            case 6:
+            case 0: currentStep = 1; RefreshStep(); break;
+            case 1: if (CheckSelectedDevice(true)) { currentStep = 2; RefreshStep(); } break;
+            case 2: if (CheckSelectedDevice(true)) CheckPc(); break;
+            case 3: if (CheckSelectedDevice(true)) await DownloadAllAsync(); break;
+            case 4: if (CheckSelectedDevice(true)) await LaunchRufusAsync(); break;
+            case 5: if (CheckSelectedDevice(true)) OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
+            case 6: if (CheckSelectedDevice(true)) OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
+            case 7:
                 Clipboard.SetText(lastReport + Environment.NewLine +
                    "Linux boot has not been validated; AiboOS has not replaced iOS.");
                 SetStatus("Progress summary copied to clipboard."); break;
@@ -238,10 +319,13 @@ internal sealed class SetupWindow : Form
         switch (currentStep)
         {
             case 0: currentStep = 1; RefreshStep(); break;
-            case 1: currentStep = 2; RefreshStep(); break;
-            case 2: case 4: case 6: OpenFolder(); break;
-            case 3: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
-            case 5: OpenOfficial("https://github.com/wwoolf21963-dotcom/AiboOS"); break;
+            case 1:
+                MessageBox.Show("Check Settings > General > About > iOS Version and Model Name.\n\nIf your iPhone is currently in DFU mode, its screen will be black. Use the version you previously confirmed; do not guess.", "Find your iPhone/iOS version", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                break;
+            case 2: currentStep = 3; RefreshStep(); break;
+            case 3: case 5: case 7: OpenFolder(); break;
+            case 4: OpenOfficial("https://docs.palera.in/using-palen1x/"); break;
+            case 6: OpenOfficial("https://github.com/wwoolf21963-dotcom/AiboOS"); break;
         }
     }
 
@@ -267,6 +351,13 @@ internal sealed class SetupWindow : Form
 
     private async Task DownloadAllAsync()
     {
+        if (!CheckSelectedDevice(true)) { currentStep = 1; RefreshStep(); return; }
+        if (RuntimeInformation.OSArchitecture != Architecture.X64)
+        {
+            MessageBox.Show("The pinned Linux ISO is for an x86_64 PC, not Windows on ARM.",
+                "Unsupported PC architecture", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         busy = true;
         RefreshStep();
         try
@@ -274,12 +365,13 @@ internal sealed class SetupWindow : Form
             Directory.CreateDirectory(folder);
             await DownloadVerifiedAsync(LinuxName, LinuxUrl, LinuxSha);
             await DownloadVerifiedAsync(RufusName, RufusUrl, RufusSha);
-            lastReport = "Both official downloads verified by SHA-256; Linux boot has not yet been tested.";
+            lastReport = "Selected: " + modelChoice.SelectedItem + ", iOS " + iosChoice.Text.Trim()
+                + ". Official Linux/Rufus downloads verified by SHA-256; boot has not been tested.";
             progress.Value = 100;
             SetStatus("Linux ISO + Rufus VERIFIED. Ready for USB preparation.");
             MessageBox.Show("Both official downloads passed SHA-256 verification.\n\nNext: create a bootable Linux USB using Rufus.\n\nNo disk was erased and your iPhone was not modified.",
                 "AiboOS files prepared", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            currentStep = 3;
+            currentStep = 4;
         }
         catch (Exception ex)
         {
@@ -354,13 +446,14 @@ internal sealed class SetupWindow : Form
 
     private async Task LaunchRufusAsync()
     {
+        if (!CheckSelectedDevice(true)) { currentStep = 1; RefreshStep(); return; }
         var path = Path.Combine(folder, RufusName);
         var iso = Path.Combine(folder, LinuxName);
         if (!File.Exists(path) || !File.Exists(iso))
         {
             MessageBox.Show("Linux ISO and Rufus are missing. Use 'Download + verify both' first.",
                 "Files not prepared", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            currentStep = 2; RefreshStep(); return;
+            currentStep = 3; RefreshStep(); return;
         }
         if (!await VerifyShaAsync(path, RufusSha) ||
             !await VerifyShaAsync(iso, LinuxSha))
