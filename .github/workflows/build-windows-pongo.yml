@@ -25,18 +25,18 @@ jobs:
       - name: Install MSYS2 and Windows libusb compiler
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-libusb
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libusb
       - name: Compile native Windows Pongo USB utility
         shell: msys2 {0}
         run: |
           set -euo pipefail
           mkdir -p dist/windows-pongo
           gcc -std=c11 -O2 -Wall -Wextra -Werror windows-pongo/aiboos-pongo.c -o dist/windows-pongo/aiboos-pongo.exe -lusb-1.0
-          cp /mingw64/bin/libusb-1.0.dll dist/windows-pongo/
+          cp /ucrt64/bin/libusb-1.0.dll dist/windows-pongo/
           cp windows-pongo/Start-Windows-USB-Check.cmd dist/windows-pongo/
           cp windows-pongo/README_FIRST.txt dist/windows-pongo/
           ./dist/windows-pongo/aiboos-pongo.exe --selftest
