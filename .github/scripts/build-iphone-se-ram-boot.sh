@@ -41,7 +41,7 @@ if hashlib.sha256(data).hexdigest() != item["SHA256"]:
 (root / "busybox-static-arm64.deb").write_bytes(data)
 print("Verified ARM64 static BusyBox", item["Version"])
 PY
-mkdir -p "$TMP/unpacked" "$TMP/initramfs"/{bin,dev,proc,sys,etc,opt/aiboos/web}
+mkdir -p "$TMP/unpacked" "$TMP/initramfs"/{bin,dev,proc,sys,etc,run,tmp,opt/aiboos/web}
 dpkg-deb -x "$TMP/busybox-static-arm64.deb" "$TMP/unpacked"
 BB="$(find "$TMP/unpacked" -type f -name busybox -print -quit)"
 test -n "$BB"
@@ -49,6 +49,12 @@ file "$BB" | grep -Eiq 'ARM aarch64|ARM64|Aarch64'
 cp "$BB" "$TMP/initramfs/bin/busybox"
 chmod 755 "$TMP/initramfs/bin/busybox"
 cp -a "$ROOT/AiboOS/Web/." "$TMP/initramfs/opt/aiboos/web/"
+echo 'Building AiboOS native ARM64 Linux display component'
+gcc -std=c11 -O2 -Wall -Wextra -Werror "$ROOT/iphone-se/native/aiboos-fb.c" -o "$TMP/aiboos-fb-host"
+"$TMP/aiboos-fb-host" --selftest
+aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror   "$ROOT/iphone-se/native/aiboos-fb.c" -o "$TMP/initramfs/bin/aiboos-fb"
+file "$TMP/initramfs/bin/aiboos-fb" | grep -Eiq 'ARM aarch64|ARM64|Aarch64'
+chmod 755 "$TMP/initramfs/bin/aiboos-fb"
 cat > "$TMP/initramfs/init" <<'INIT'
 #!/bin/busybox sh
 export PATH=/bin:/sbin
@@ -58,7 +64,10 @@ mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 echo 'AiboOS SE 2016: experimental Linux RAM boot reached userspace'
 echo 'Internal storage is not mounted or modified by this initramfs.'
-echo 'Web interface sources: /opt/aiboos/web (no browser/runtime yet).'
+echo 'AiboOS native framebuffer module available; visual output depends on Linux display driver.'
+echo 'Web UI files are bundled but no web runtime is installed.'
+/bin/aiboos-fb --show 2>&1 || echo 'No working framebuffer; falling back to diagnostic console.'
+echo 'Native A9 internal storage support is unverified; no permanent installation attempted.'
 exec /bin/busybox sh </dev/console >/dev/console 2>&1
 INIT
 chmod 755 "$TMP/initramfs/init"
@@ -89,8 +98,9 @@ DO NOT FLASH this bundle onto any device.
 
 m1n1-linux.bin combines Hoolock m1n1 + bootargs + DTBs + Linux + ARM64
 static BusyBox initramfs. The /init script mounts only virtual proc/sys/dev
-filesystems, then drops into a local console shell. AiboOS web UI files
-are bundled as source data but a graphical runtime is NOT installed.
+filesystems, then drops into a local console shell. AiboOS web UI files are bundled as source data but a browser/runtime is NOT
+installed. The separate native framebuffer program draws a minimal boot
+screen if /dev/fb0 is available. This is not the full AiboOS UI.
 
 This may not boot on iPhone8,4: exact A9 board DTB, firmware, USB console,
 pongoOS USB transport, and on-device support remain unverified.
@@ -101,4 +111,4 @@ A9 internal flash installation and recovery are not established.
 INFO
 (cd "$OUT" && sha256sum m1n1.bin m1n1-linux.bin Image.gz initramfs.cpio.gz > SHA256SUMS.txt)
 (cd "$OUT" && sha256sum -c SHA256SUMS.txt)
-echo 'RAM-only experiment created in GitHub Actions. No iPhone was accessed.'
+echo 'RAM-only native userspace experiment created in GitHub Actions. No iPhone was accessed.'

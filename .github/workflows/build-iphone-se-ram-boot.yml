@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/build-iphone-se-ram-boot.yml'
       - '.github/scripts/build-iphone-se-ram-boot.sh'
+      - 'iphone-se/native/**'
+      - 'iphone-se/build-targeted-kits.sh'
 
 permissions:
   contents: read
@@ -38,7 +40,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            make cpio gzip xz-utils file python3 curl
+            make cpio gzip xz-utils file python3 curl device-tree-compiler
       - name: Build m1n1 and RAM-only experimental boot payload
         run: bash .github/scripts/build-iphone-se-ram-boot.sh
       - name: Validate RAM boot experiment
@@ -48,6 +50,22 @@ jobs:
           test -s iphone-se-ram-boot/READ_ME_FIRST.txt
           gzip -t iphone-se-ram-boot/initramfs.cpio.gz
           (cd iphone-se-ram-boot && sha256sum -c SHA256SUMS.txt)
+          test -x "$RUNNER_TEMP/aiboos-se-ram/initramfs/bin/aiboos-fb"
+          "$RUNNER_TEMP/aiboos-se-ram/aiboos-fb-host" --selftest
+      - name: Prepare board-specific images from THIS run (never stale artifacts)
+        run: |
+          mkdir previous-ram-kit
+          cp -a iphone-se-ram-boot/. previous-ram-kit/
+          bash iphone-se/build-targeted-kits.sh
+          test -s iphone-se-a9-targeted/Samsung-S8000/m1n1-linux.bin
+          test -s iphone-se-a9-targeted/TSMC-S8003/m1n1-linux.bin
+      - name: Upload board-specific experiments
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-A9-Board-Variants-Native-RAM-ONLY-NOT-FLASHABLE
+          path: iphone-se-a9-targeted/
+          retention-days: 30
+          if-no-files-found: error
       - name: Upload RAM-only experiment
         uses: actions/upload-artifact@v4
         with:

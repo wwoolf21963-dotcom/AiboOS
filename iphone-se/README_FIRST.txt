@@ -30,9 +30,10 @@ documented PongoOS boot uses Linux or macOS for palera1n and pongoterm.
 Windows-only boot delivery has NOT been verified for this device/project.
 No Windows checkm8/DFU driver switching is done by these scripts.
 
-Even with a successful USB boot test, AiboOS is not yet a native graphical
-desktop on the SE. The RAM initramfs is an experiment, not a finished OS,
-and the AiboOS web UI is not a running window manager.
+The current RAM image now includes a native ARM64 framebuffer status screen
+experiment, which may display if the kernel exposes /dev/fb0. It is NOT a
+desktop, working AiboOS app environment, or phone-verified boot. The AiboOS
+web UI remains static source files and is not yet a running window manager.
 
 References:
 https://github.com/HoolockLinux/docs/blob/master/tutorials/SETUP_pongoOS.md

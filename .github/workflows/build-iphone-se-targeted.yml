@@ -1,12 +1,7 @@
-name: Build AiboOS iPhone SE A9 Targeted RAM Kits
+name: Legacy A9 Kit Packaging (manual, use RAM pipeline for current source)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/build-iphone-se-targeted.yml'
-      - 'iphone-se/**'
 
 permissions:
   contents: read
