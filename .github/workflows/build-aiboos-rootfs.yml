@@ -63,6 +63,9 @@ jobs:
           ln -s ../bin/busybox "$FS/sbin/init"
           aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o "$FS/bin/aiboos-fb"
           qemu-aarch64-static "$FS/bin/aiboos-fb" --selftest
+          install -m 755 iphone-se/native/aiboos-usb-serial.sh "$FS/bin/aiboos-usb-serial"
+          sh -n "$FS/bin/aiboos-usb-serial"
+          sh "$FS/bin/aiboos-usb-serial" --selftest
           cp -a AiboOS/Web/. "$FS/opt/aiboos/web/"
           cat > "$FS/etc/os-release" <<'EOF'
           NAME=AiboOS
@@ -85,7 +88,8 @@ jobs:
           mount -t tmpfs -o mode=755 tmpfs /run 2>/dev/null || true
           hostname aiboos
           echo "AiboOS ARM64 development system"
-          /bin/aiboos-fb --show || echo "Framebuffer unavailable"
+          /bin/aiboos-usb-serial >/run/aiboos-usb.log 2>&1 &
+          /bin/aiboos-fb --ui >/run/aiboos-ui.log 2>&1 &
           EOF
           chmod 755 "$FS/etc/init.d/rcS"
           chmod 1777 "$FS/tmp"
@@ -107,7 +111,8 @@ jobs:
           xz -t "$IMG.xz"
           cat > "$OUT/READ_ME.txt" <<'EOF'
           AiboOS persistent ARM64 Linux root filesystem (development image).
-          Includes BusyBox init, native framebuffer component, local console,
+          Includes BusyBox init, native framebuffer UI with physical-button navigation,
+          experimental USB ACM serial status, local console,
           AiboOS web assets, and a writable ext4 filesystem for future supported
           Linux targets. The web assets do not yet have a native browser runtime.
           ARM64 user-space binaries and filesystem integrity are tested in CI.

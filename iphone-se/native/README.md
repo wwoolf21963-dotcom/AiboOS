@@ -26,3 +26,17 @@ A permanent no-iOS install is therefore still unavailable. A kernel,
 DTB, userspace binary, or valid ZIP alone is not proof of hardware boot.
 
 No user should flash these artifacts or erase their iPhone.
+
+## November 2026 A9 usability work
+
+The public iPhone SE experiment at https://github.com/efremmanac-prog/Iphone-se-linux
+reports native Linux and framebuffer output on Samsung A9, with touchscreen
+and wireless drivers still missing. AiboOS now includes a native framebuffer
+menu navigable through the Linux evdev volume/home keys (if provided by the
+kernel); this is a fallback, not a touchscreen driver. It also includes a
+standard configfs ACM gadget initializer which waits for a UDC rather than
+assuming the USB controller is ready. It emits a status banner only: no shell
+or disk access. Both are included in the RAM and ext4 development builds.
+The renderer/navigation self-tests do not exercise the phone's hardware.
+Kernel gadget config, host serial enumeration, evdev key mapping, and A9
+storage, wireless, and touch support remain to be verified on-device.

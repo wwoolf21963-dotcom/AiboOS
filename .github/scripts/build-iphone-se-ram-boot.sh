@@ -55,6 +55,9 @@ gcc -std=c11 -O2 -Wall -Wextra -Werror "$ROOT/iphone-se/native/aiboos-fb.c" -o "
 aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror   "$ROOT/iphone-se/native/aiboos-fb.c" -o "$TMP/initramfs/bin/aiboos-fb"
 file "$TMP/initramfs/bin/aiboos-fb" | grep -Eiq 'ARM aarch64|ARM64|Aarch64'
 chmod 755 "$TMP/initramfs/bin/aiboos-fb"
+install -m 755 "$ROOT/iphone-se/native/aiboos-usb-serial.sh" "$TMP/initramfs/bin/aiboos-usb-serial"
+sh -n "$TMP/initramfs/bin/aiboos-usb-serial"
+sh "$TMP/initramfs/bin/aiboos-usb-serial" --selftest
 cat > "$TMP/initramfs/init" <<'INIT'
 #!/bin/busybox sh
 export PATH=/bin:/sbin
@@ -66,7 +69,8 @@ echo 'AiboOS SE 2016: experimental Linux RAM boot reached userspace'
 echo 'Internal storage is not mounted or modified by this initramfs.'
 echo 'AiboOS native framebuffer module available; visual output depends on Linux display driver.'
 echo 'Web UI files are bundled but no web runtime is installed.'
-/bin/aiboos-fb --show 2>&1 || echo 'No working framebuffer; falling back to diagnostic console.'
+/bin/aiboos-usb-serial >/run/aiboos-usb.log 2>&1 &
+/bin/aiboos-fb --ui >/run/aiboos-ui.log 2>&1 &
 echo 'Native A9 internal storage support is unverified; no permanent installation attempted.'
 exec /bin/busybox sh </dev/console >/dev/console 2>&1
 INIT
@@ -100,7 +104,8 @@ m1n1-linux.bin combines Hoolock m1n1 + bootargs + DTBs + Linux + ARM64
 static BusyBox initramfs. The /init script mounts only virtual proc/sys/dev
 filesystems, then drops into a local console shell. AiboOS web UI files are bundled as source data but a browser/runtime is NOT
 installed. The separate native framebuffer program draws a minimal boot
-screen if /dev/fb0 is available. This is not the full AiboOS UI.
+screen and physical-button navigation if framebuffer and evdev are available.
+Experimental USB ACM serial status waits for a Linux UDC. No hardware test.
 
 This may not boot on iPhone8,4: exact A9 board DTB, firmware, USB console,
 pongoOS USB transport, and on-device support remain unverified.

@@ -11,6 +11,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <linux/fb.h>
+#include <linux/input.h>
+#include <poll.h>
+#include <glob.h>
+#include <errno.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -99,6 +104,86 @@ static void render(struct screen *s) {
     text(s,24,h/3+90,"NO DISK WRITES",k,0x98f0be);
     text(s,24,h-65,"EXPERIMENTAL",k,0xffc2df);
 }
+/* Volume keys work through the ordinary Linux evdev interface. A real
+ * touchscreen driver can later provide navigation through the same UI. */
+enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_COUNT };
+static int navigate(int page, const struct input_event *ev) {
+    if (ev->type != EV_KEY || ev->value != 1) return page;
+    switch (ev->code) {
+        case KEY_VOLUMEUP: case KEY_UP: return (page + 1) % PAGE_COUNT;
+        case KEY_VOLUMEDOWN: case KEY_DOWN: return (page + PAGE_COUNT - 1) % PAGE_COUNT;
+        case KEY_HOME: return PAGE_HOME;
+        default: return page;
+    }
+}
+static void shell_page(struct screen *s, int page) {
+    int w=(int)s->w, h=(int)s->h;
+    int k=w>=600?3:2;
+    rect(s,0,0,w,h,0x191328);
+    rect(s,0,0,w,h/5,0x503058);
+    rect(s,0,h/5-4,w,4,0xff91c1);
+    text(s,16,18,"AIBOOS",w>=400?5:3,0xff91c1);
+    const char *titles[]={"HOME","CONNECTION","SYSTEM"};
+    const char *lines[][3]={
+        {"NATIVE LINUX","VOLUME KEYS TO MOVE","HOME TO RETURN"},
+        {"USB SERIAL","WIFI NOT VERIFIED","TOUCH NOT REQUIRED"},
+        {"ARM64 A9","DEVELOPMENT BUILD","NO DISK WRITES"}
+    };
+    text(s,16,h/5+14,titles[page],k+1,0xffffff);
+    int a=h/5+48, step=(h-a-38)/4;
+    if (step<18) step=18;
+    for(int i=0;i<3;i++){
+        rect(s,12,a+i*step,w-24,step-3,0x332440);
+        text(s,20,a+i*step+5,lines[page][i],w>=600?3:2,0xffc2df);
+    }
+    for(int i=0;i<PAGE_COUNT;i++)
+        rect(s,w/2-25+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
+}
+static volatile sig_atomic_t stopped;
+static void stop_ui(int sig) { (void)sig; stopped=1; }
+static int run_ui(struct screen *s) {
+    struct pollfd inputs[48];
+    unsigned count=0;
+    int page=PAGE_HOME;
+    signal(SIGTERM,stop_ui);
+    signal(SIGINT,stop_ui);
+    shell_page(s,page);
+    while(!stopped) {
+        /* Re-enumerate regularly: Linux may register gpio-keys late. */
+        glob_t devices={0};
+        if (glob("/dev/input/event*",0,NULL,&devices)==0) {
+            for(size_t i=0;i<devices.gl_pathc && count<48;i++){
+                int fd=open(devices.gl_pathv[i],O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+                if(fd<0) continue;
+                unsigned long bits[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
+                unsigned int width=sizeof(unsigned long)*8;
+                if(ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)<0 ||
+                   !((bits[KEY_VOLUMEUP/width]>>(KEY_VOLUMEUP%width))&1UL ||
+                     (bits[KEY_VOLUMEDOWN/width]>>(KEY_VOLUMEDOWN%width))&1UL ||
+                     (bits[KEY_HOME/width]>>(KEY_HOME%width))&1UL ||
+                     (bits[KEY_UP/width]>>(KEY_UP%width))&1UL ||
+                     (bits[KEY_DOWN/width]>>(KEY_DOWN%width))&1UL)) { close(fd); continue; }
+                inputs[count++]=(struct pollfd){.fd=fd,.events=POLLIN};
+            }
+        }
+        globfree(&devices);
+        /* Keep existing fds open for a short interval, then refresh detection. */
+        for (int tick=0;tick<10 && !stopped;tick++){
+            int ready=poll(inputs,count,250);
+            if(ready<0 && errno!=EINTR) break;
+            for(unsigned i=0;i<count;i++) if(inputs[i].revents&POLLIN){
+                struct input_event ev;
+                while(read(inputs[i].fd,&ev,sizeof(ev))==(ssize_t)sizeof(ev)){
+                    int next=navigate(page,&ev);
+                    if(next!=page){page=next;shell_page(s,page);}
+                }
+            }
+        }
+        for(unsigned i=0;i<count;i++) close(inputs[i].fd);
+        count=0;
+    }
+    return 0;
+}
 static int selftest(void) {
     static unsigned char buf[320*240*4];
     struct screen s = { .data=buf, .len=sizeof(buf), .w=320,.h=240,
@@ -109,13 +194,22 @@ static int selftest(void) {
     if (value != 0x112233u) return 2;
     render(&s);
     if (!buf[0] && !buf[1] && !buf[2]) return 3;
-    puts("PASS AiboOS native framebuffer offline renderer test; no hardware accessed.");
+    struct input_event ev={.type=EV_KEY,.code=KEY_VOLUMEUP,.value=1};
+    if(navigate(PAGE_HOME,&ev)!=PAGE_CONNECTION) return 4;
+    ev.value=2;
+    if(navigate(PAGE_CONNECTION,&ev)!=PAGE_CONNECTION) return 5;
+    ev.value=1;ev.code=KEY_VOLUMEDOWN;
+    if(navigate(PAGE_HOME,&ev)!=PAGE_SYSTEM) return 6;
+    ev.code=KEY_HOME;
+    if(navigate(PAGE_SYSTEM,&ev)!=PAGE_HOME) return 7;
+    for(int page=0;page<PAGE_COUNT;page++) shell_page(&s,page);
+    puts("PASS AiboOS native framebuffer and evdev navigation offline tests.");
     return 0;
 }
 int main(int argc, char **argv) {
     if (argc==2 && !strcmp(argv[1],"--selftest")) return selftest();
-    if (argc!=2 || strcmp(argv[1],"--show")) {
-        fputs("Usage: aiboos-fb --show | --selftest\n",stderr);
+    if (argc!=2 || (strcmp(argv[1],"--show") && strcmp(argv[1],"--ui"))) {
+        fputs("Usage: aiboos-fb --show | --ui | --selftest\n",stderr);
         return 2;
     }
     int fd=open("/dev/fb0",O_RDWR|O_CLOEXEC);
@@ -135,7 +229,7 @@ int main(int argc, char **argv) {
     struct screen s={ .data=memory, .len=f.smem_len, .w=v.xres, .h=v.yres,
         .stride=f.line_length,.bpp=v.bits_per_pixel,.xoff=v.xoffset,.yoff=v.yoffset,
         .red=v.red,.green=v.green,.blue=v.blue };
-    render(&s);
+    if (!strcmp(argv[1],"--ui")) run_ui(&s); else render(&s);
     munmap(memory,f.smem_len);
     close(fd);
     puts("AiboOS native framebuffer boot preview drawn. No flash/storage operations.");
