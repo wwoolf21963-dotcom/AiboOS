@@ -5,22 +5,34 @@ ROOT="$PWD"
 TMP="$RUNNER_TEMP/aiboos-install-lifecycle"
 REPORT="$ROOT/install-lifecycle-report"
 mkdir -p "$TMP" "$REPORT"
-K="$TMP/linux"
-git init "$K"
-git -C "$K" remote add origin https://github.com/OrchardLinux/linux.git
-git -C "$K" fetch --depth=1 origin ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1
-git -C "$K" checkout --detach FETCH_HEAD
-make -C "$K" ARCH=arm64 LLVM=1 defconfig
-"$K/scripts/config" --file "$K/.config" \
- --enable BLK_DEV_INITRD --enable RD_GZIP --enable DEVTMPFS \
- --enable TMPFS --enable VIRTIO --enable VIRTIO_MMIO --enable VIRTIO_BLK \
- --enable EXT4_FS --enable SERIAL_AMBA_PL011 --enable SERIAL_AMBA_PL011_CONSOLE
-make -C "$K" ARCH=arm64 LLVM=1 olddefconfig
-for f in BLK_DEV_INITRD RD_GZIP DEVTMPFS TMPFS VIRTIO_MMIO VIRTIO_BLK EXT4_FS SERIAL_AMBA_PL011_CONSOLE; do
- grep -qx "CONFIG_$f=y" "$K/.config"
-done
-make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 Image
-cp "$K/.config" "$REPORT/virtual-kernel.config"
+# Reuse the exact virtual kernel configuration and source across userspace retests.
+CACHE="$RUNNER_TEMP/aiboos-virtual-kernel-cache"
+mkdir -p "$CACHE"
+if [ -s "$CACHE/Image" ] && [ -s "$CACHE/kernel.config" ] && [ -s "$CACHE/SHA256SUMS.txt" ] &&
+   (cd "$CACHE" && sha256sum -c SHA256SUMS.txt); then
+    echo "Using cached virtual ARM64 kernel."
+else
+    K="$TMP/linux"
+    git init "$K"
+    git -C "$K" remote add origin https://github.com/OrchardLinux/linux.git
+    git -C "$K" fetch --depth=1 origin ef92d0d3b34aecba1fca233c4b983f89d1dbaaa1
+    git -C "$K" checkout --detach FETCH_HEAD
+    make -C "$K" ARCH=arm64 LLVM=1 defconfig
+    "$K/scripts/config" --file "$K/.config" \
+     --enable BLK_DEV_INITRD --enable RD_GZIP --enable DEVTMPFS \
+     --enable TMPFS --enable VIRTIO --enable VIRTIO_MMIO --enable VIRTIO_BLK \
+     --enable EXT4_FS --enable SERIAL_AMBA_PL011 --enable SERIAL_AMBA_PL011_CONSOLE
+    make -C "$K" ARCH=arm64 LLVM=1 olddefconfig
+    for f in BLK_DEV_INITRD RD_GZIP DEVTMPFS TMPFS VIRTIO_MMIO VIRTIO_BLK EXT4_FS SERIAL_AMBA_PL011_CONSOLE; do
+     grep -qx "CONFIG_$f=y" "$K/.config"
+    done
+    make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 Image
+    cp "$K/arch/arm64/boot/Image" "$CACHE/Image"
+    cp "$K/.config" "$CACHE/kernel.config"
+    (cd "$CACHE" && sha256sum Image kernel.config > SHA256SUMS.txt)
+fi
+cp "$CACHE/kernel.config" "$REPORT/virtual-kernel.config"
+(cd "$CACHE" && sha256sum -c SHA256SUMS.txt)
 (cd current-rootfs && sha256sum -c SHA256SUMS.txt)
 xz -dc current-rootfs/AiboOS-ARM64-rootfs.ext4.xz > "$TMP/source.ext4"
 mkdir -p "$TMP/source" "$TMP/ram"/{bin,dev,proc,sys,run,mnt/aiboos,opt/aiboos/install}
@@ -81,6 +93,7 @@ case " $(cat /proc/cmdline) " in
   ;;
  *" aiboos_ci=restart "*)
   if /bin/aiboos-root-start --locate-uuid 00000000-0000-0000-0000-000000000000; then echo "Wrong UUID accepted"; exit 1; fi
+  /bin/aiboos-root-start --match-uuid 2a1b0000-1234-4567-89ab-0123456789ab /dev/vda || { echo "Direct ext4 signature check failed"; exit 1; }
   test "$(/bin/aiboos-root-start --locate-uuid 2a1b0000-1234-4567-89ab-0123456789ab)" = /dev/vda
   exec /bin/busybox sh /bin/aiboos-root-start --boot-uuid 2a1b0000-1234-4567-89ab-0123456789ab
   ;;
@@ -97,8 +110,8 @@ test -f "$TMP/test-disk.ext4" && test ! -L "$TMP/test-disk.ext4"
 run_vm() {
  timeout 240 qemu-system-aarch64 -machine virt -cpu cortex-a57 -smp 2 -m 1024 \
   -nodefaults -nographic -serial stdio -monitor none -no-reboot \
-  -kernel "$K/arch/arm64/boot/Image" -initrd "$TMP/ram.cpio.gz" \
-  -append "console=ttyAMA0 rdinit=/init aiboos_ci=$1" \
+  -kernel "$CACHE/Image" -initrd "$TMP/ram.cpio.gz" \
+  -append "console=ttyAMA0 panic=1 rdinit=/init aiboos_ci=$1" \
   -drive "file=$TMP/test-disk.ext4,if=none,format=raw,id=testdisk" \
   -device virtio-blk-device,drive=testdisk 2>&1 | tee "$REPORT/$1.log"
 }

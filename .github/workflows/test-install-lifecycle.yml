@@ -8,19 +8,28 @@ on:
       - '.github/scripts/test-install-lifecycle.sh'
 permissions:
   contents: read
+  actions: read
+concurrency:
+  group: aiboos-standalone-lifecycle
+  cancel-in-progress: true
 jobs:
-  rootfs:
-    uses: ./.github/workflows/build-aiboos-rootfs.yml
   lifecycle:
-    needs: rootfs
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Reuse verified ARM64 filesystem from successful run
+        uses: actions/download-artifact@v4
         with:
           name: AiboOS-ARM64-Persistent-RootFS-DEVELOPMENT
+          run-id: 44966395287
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: current-rootfs
+      - name: Restore exact virtual kernel build
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/aiboos-virtual-kernel-cache
+          key: aiboos-virt-arm64-ef92d0d3b34a-defconfig-v1-${{ runner.os }}-${{ runner.arch }}
       - name: Install virtual machine and build tools
         run: |
           sudo apt-get update
