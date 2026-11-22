@@ -18,10 +18,27 @@ validate() {
     done
     (cd "$root" && sha256sum -c .aiboos-system-sha256) || fail "Installed system checksum mismatch."
 }
+# Inspect the ext4 primary superblock directly: BusyBox blkid output varies
+# with build options and is not a reliable machine-readable interface.
+# Require extents (the supported AiboOS ext4 format), magic, and exact UUID.
+# This function reads only 1024 bytes; it never writes to the device.
+match_ext4_uuid() {
+    expected=$(printf '%s' "$1" | /bin/busybox tr -d '-')
+    hex=$(/bin/busybox dd if="$2" bs=1024 skip=1 count=1 2>/dev/null |
+        /bin/busybox od -An -v -tx1 | /bin/busybox tr -d ' \n') || return 1
+    [ "${#hex}" = 2048 ] || return 1
+    [ "$(printf '%s' "$hex" | /bin/busybox cut -c113-116)" = 53ef ] || return 1
+    feature=$(printf '%s' "$hex" | /bin/busybox cut -c193-194)
+    [ "$((0x$feature & 0x40))" -ne 0 ] || return 1
+    [ "$(printf '%s' "$hex" | /bin/busybox cut -c209-240)" = "$expected" ]
+}
+valid_uuid() {
+    printf '%s\n' "$1" | /bin/busybox grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+}
 # Resolve a specific ext4 filesystem UUID, without modifying any volume.
 locate_uuid() {
     uuid=$1
-    printf '%s\n' "$uuid" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || fail "Invalid filesystem UUID."
+    valid_uuid "$uuid" || fail "Invalid filesystem UUID."
     count=0
     selected=
     for entry in /sys/class/block/*; do
@@ -30,9 +47,7 @@ locate_uuid() {
         case "$name" in loop*|ram*|zram*|dm-*|md*) continue;; esac
         dev="/dev/$name"
         [ -b "$dev" ] || continue
-        info=$(/bin/busybox blkid "$dev" 2>/dev/null) || continue
-        case " $info " in *" UUID=\"$uuid\" "*) ;; *) continue;; esac
-        case " $info " in *' TYPE="ext4" '*) ;; *) continue;; esac
+        match_ext4_uuid "$uuid" "$dev" || continue
         count=$((count+1))
         selected=$dev
     done
@@ -46,6 +61,12 @@ mounted_volume_valid() {
     (validate "$target/AiboOS")
 }
 case "${1:-}" in
+    --match-uuid)
+        [ "$#" = 3 ] || fail "Specify UUID and a test image or block device."
+        valid_uuid "$2" || fail "Invalid filesystem UUID."
+        [ -f "$3" ] || [ -b "$3" ] || fail "Not an image or block device."
+        match_ext4_uuid "$2" "$3"
+        ;;
     --locate-uuid)
         [ "$#" = 2 ] || fail "Specify an ext4 UUID."
         locate_uuid "$2"

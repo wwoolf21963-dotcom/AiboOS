@@ -1,13 +1,6 @@
 name: Build and test complete AiboOS native development package
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/build-aiboos-image-setup.yml'
-      - 'windows-os-image-setup/**'
-      - 'iphone-se/native/aiboos-root-start.sh'
-      - '.github/scripts/test-install-lifecycle.sh'
 permissions:
   contents: read
   actions: read
