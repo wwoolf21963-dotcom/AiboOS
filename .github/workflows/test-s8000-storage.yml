@@ -52,7 +52,7 @@ jobs:
               ("/soc/iommu@601008000", "status", "s", "disabled", "equal"),
               ("/soc/iommu@602008000", "status", "s", "disabled", "equal"),
               ("/soc/iommu@602008000", "reg", "x", [0x6, 0x02008000, 0, 0x4000], "equal"),
-              ("/soc/iommu@602008000", "compatible", "s", "apple,s8000-dart apple,s5l8960x", "equal"),
+              ("/soc/iommu@602008000", "compatible", "s", "apple,s8000-dart apple,s5l8960x-dart", "equal"),
               ("/soc/pcie@610000000", "reg-names", "s", "config rc phy port0 port1 port2 port3 nvmmu", "equal"),
           ]
           failures = []
