@@ -25,7 +25,7 @@ jobs:
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git build-essential clang lld llvm flex bison bc libssl-dev libelf-dev libncurses-dev device-tree-compiler dwarves zstd xz-utils python3 rsync cpio
+          sudo apt-get install -y git build-essential clang lld llvm flex bison bc libssl-dev libelf-dev libncurses-dev device-tree-compiler dwarves zstd xz-utils python3 rsync cpio kmod
       - name: Compile and audit OrchardLinux A9
         run: |
           bash -n .github/scripts/build-orchard-a9.sh
