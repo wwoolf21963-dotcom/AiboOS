@@ -120,6 +120,12 @@ static void render(struct screen *s) {
 enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_POWER, PAGE_SECURITY, PAGE_COUNT };
 enum { ACTION_SILENT, ACTION_DIM, ACTION_HOME, ACTION_OFF, ACTION_COUNT };
 enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_MP3, TONE_COUNT };
+#ifdef AIBO18_NATIVE
+#include "aibo18-icons.h"
+#define LAUNCHER_COUNT AIBO18_COUNT
+#else
+#define LAUNCHER_COUNT (PAGE_COUNT-1)
+#endif
 struct switch_ui { int page, selected, action, sound, position, silent, toast; long long until; };
 static const char *actions[]={"SILENT MODE","DIM UI","OPEN HOME","DISABLED"};
 static const char *sounds[]={"NONE","SOFT CLICK","CHIME","CUSTOM MP3"};
@@ -135,12 +141,17 @@ static int navigate(struct switch_ui *u, const struct input_event *ev) {
     int direction=ev->code==KEY_VOLUMEUP||ev->code==KEY_UP?1:
                   ev->code==KEY_VOLUMEDOWN||ev->code==KEY_DOWN?-1:0;
     if(ev->code==KEY_HOME||ev->code==KEY_HOMEPAGE){
-        u->page=u->page==PAGE_HOME?u->selected+1:PAGE_HOME;
+        if(u->page!=PAGE_HOME)u->page=PAGE_HOME;
+#ifdef AIBO18_NATIVE
+        else u->page=u->selected==10?PAGE_SETTINGS:PAGE_COUNT;
+#else
+        else u->page=u->selected+1;
+#endif
         return 1;
     }
     if(!direction)return 0;
     if(u->page==PAGE_HOME){
-        u->selected=(u->selected+direction+PAGE_COUNT-1)%(PAGE_COUNT-1);
+        u->selected=(u->selected+direction+LAUNCHER_COUNT)%LAUNCHER_COUNT;
         return 1;
     }
     return 0;
@@ -206,6 +217,7 @@ static void island(struct screen *s,const struct switch_ui *u){
     int ts=w>=400?3:2;
     text(s,x+18*k,y+(ph-7*ts)/2,label,ts,color);
 }
+#ifndef AIBO18_NATIVE
 static void launcher_icon(struct screen *s,int x,int y,int side,int app){
     const uint32_t colors[]={0x597fdb,0x8b55be,0x59637b,0xe46ca8,0x36a989,0x7957c2};
     int k=side/12;if(k<1)k=1;
@@ -272,8 +284,54 @@ static void launcher(struct screen *s,const struct switch_ui *u){
     text(s,(w-(int)strlen(hint)*6*hs)/2,h-7*hs-7,hint,hs,0xffc2df);
     island(s,u);
 }
+#else
+/* Original 1.8 raster icon artwork, native framebuffer composition. */
+static void launcher(struct screen *s,const struct switch_ui *u){
+    int w=(int)s->w,h=(int)s->h;
+    int scale=w>=480?3:w>=300?2:1;
+    int brand=w>=400?5:3;
+    for(int y=0;y<h;y++){
+        unsigned r=34u+45u*(unsigned)y/(unsigned)h;
+        unsigned b=64u+25u*(unsigned)y/(unsigned)h;
+        rect(s,0,y,w,1,(r<<16)|(24u<<8)|b);
+    }
+    text(s,16,12,"AIBO",brand,0xff91c1);
+    text(s,16+24*brand,12,"OS",brand,0xffffff);
+    text(s,18+36*brand,12,"1-8",2,0xffffff);
+    int top=12+7*brand+12, bottom=h-10, cellw=w/4;
+    int cellh=(bottom-top)/5;
+    int side=cellw-14;
+    if(side>cellh-7*scale-12)side=cellh-7*scale-12;
+    if(side>110)side=110;
+    if(side<10)side=10;
+    rect(s,5,top+4*cellh,w-10,cellh,0x68476f);
+    for(int i=0;i<AIBO18_COUNT;i++){
+        int row=i<AIBO18_HOME_COUNT?i/4:4;
+        int col=i<AIBO18_HOME_COUNT?i%4:i-AIBO18_HOME_COUNT;
+        int cx=col*cellw+cellw/2,y=top+row*cellh+3,x=cx-side/2;
+        if(i==u->selected)rect(s,x-3,y-3,side+6,side+6,0xffb1d9);
+        for(int yy=0;yy<side;yy++)for(int xx=0;xx<side;xx++){
+            uint32_t p=aibo18_pixels[i][(yy*60/side)*60+xx*60/side];
+            if((p>>24)>127)pixel(s,x+xx,y+yy,p&0xffffff);
+        }
+        int ls=scale,n=(int)strlen(aibo18_names[i]);
+        if(n*6*ls>cellw-2)ls=1;
+        if(n*6*ls<=cellw-2)text(s,cx-n*3*ls,y+side+3,aibo18_names[i],ls,0xffffff);
+    }
+    island(s,u);
+}
+#endif
 static void shell_page(struct screen *s,const struct switch_ui *u) {
     if(u->page==PAGE_HOME){launcher(s,u);return;}
+#ifdef AIBO18_NATIVE
+    if(u->page==PAGE_COUNT){
+        rect(s,0,0,(int)s->w,(int)s->h,0x191328);
+        text(s,16,20,aibo18_names[u->selected],3,0xff91c1);
+        text(s,16,70,"NATIVE APP PENDING",2,0xffffff);
+        text(s,16,104,"HOME TO RETURN",2,0xffffff);
+        return;
+    }
+#endif
     int w=(int)s->w,h=(int)s->h,k=w>=600?3:2,page=u->page;
     uint32_t bg=(u->action==ACTION_DIM && u->position==1)?0x08060c:0x191328;
     rect(s,0,0,w,h,bg);
@@ -514,12 +572,20 @@ static int selftest(void) {
     ev.value=1;ev.code=KEY_VOLUMEDOWN;
     if(!navigate(&u,&ev)||u.selected!=0)return 6;
     ev.code=KEY_HOME;
+#ifdef AIBO18_NATIVE
+    if(!navigate(&u,&ev)||u.page!=PAGE_COUNT)return 7;
+#else
     if(!navigate(&u,&ev)||u.page!=PAGE_CONNECTION)return 7;
+#endif
     if(!navigate(&u,&ev)||u.page!=PAGE_HOME)return 18;
     ev.code=KEY_VOLUMEDOWN;
-    if(!navigate(&u,&ev)||u.selected!=PAGE_COUNT-2)return 19;
+    if(!navigate(&u,&ev)||u.selected!=LAUNCHER_COUNT-1)return 19;
     ev.code=KEY_HOME;
+#ifdef AIBO18_NATIVE
+    if(!navigate(&u,&ev)||u.page!=PAGE_COUNT)return 20;
+#else
     if(!navigate(&u,&ev)||u.page!=PAGE_SECURITY)return 20;
+#endif
     if(!navigate(&u,&ev)||u.page!=PAGE_HOME)return 21;
     launcher(&s,&u);
     memcpy(&value,buf+(12*320+19)*4,4);
