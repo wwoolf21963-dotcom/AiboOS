@@ -1,0 +1,28 @@
+name: Package original AiboOS 1.8 system shell
+on:
+  workflow_dispatch:
+  push:
+    branches: [wifi-n69u-bringup]
+    paths:
+      - 'iphone-se/native/aiboos18/**'
+      - '.github/workflows/package-aiboos18-system.yml'
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Package pinned release resources
+        run: |
+          bash iphone-se/native/aiboos18/package-release.sh system-shell
+          python3 -m py_compile system-shell/system-shell.py
+          rm -rf system-shell/__pycache__
+          git show cca2f2356008a89c7165501fe8249e7f5554ac0f:AiboOS/Web/index.html | cmp - system-shell/web/index.html
+          echo 'Exact original release HTML verified; no physical device or GUI test performed.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-1.8-Original-Release-Linux-Shell
+          path: system-shell/
