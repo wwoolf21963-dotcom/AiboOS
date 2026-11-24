@@ -1,0 +1,71 @@
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -3418,12 +3418,58 @@
+ 	pci_pwrctrl_destroy_devices(pcie->dev);
+ }
+ 
++/*
++ * S8000 (Samsung A9) is not S8003. Validate the n69u resource description
++ * before the generic probe can map registers or request clocks and GPIOs.
++ * Addresses below are from the pinned n69u public ADT, not PHY tuning data.
++ */
++static int apple_s8000_probe_preflight(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	static const struct {
++		const char *name;
++		resource_size_t start;
++		resource_size_t size;
++	} required[] = {
++		{ "config", 0x610000000ULL, SZ_16M },
++		{ "rc",     0x600000000ULL, SZ_32K },
++		{ "phy",    0x600008000ULL, SZ_16K },
++		{ "port1",  0x602000000ULL, SZ_16K },
++	};
++	struct resource *res;
++	unsigned int i;
++
++	if (!of_machine_is_compatible("apple,n69u"))
++		return -ENODEV;
++
++	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "phy-ip"))
++		return dev_err_probe(dev, -EINVAL,
++				     "unexpected S8000 PHY-IP resource\n");
++
++	for (i = 0; i < ARRAY_SIZE(required); i++) {
++		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
++						   required[i].name);
++		if (!res || res->start != required[i].start ||
++		    resource_size(res) != required[i].size)
++			return dev_err_probe(dev, -EINVAL,
++					     "invalid S8000 %s resource\n",
++					     required[i].name);
++	}
++
++	/* No verified S8000 lane/power/tuning sequence exists yet. */
++	return dev_err_probe(dev, -EOPNOTSUPP,
++			     "S8000 PHY initialization is not implemented\n");
++}
++
+ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct pci_host_bridge *bridge;
+ 	struct apple_h9p_pcie *pcie;
+ 	u32 doorbell;
+ 	int ret;
+ 
++	if (of_device_is_compatible(dev->of_node, "apple,s8000-pcie"))
++		return apple_s8000_probe_preflight(pdev);
++
+ 	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
+@@ -3648,7 +3694,8 @@
+ 	.no_port_irqs = true,
+ };
+ 
+ static const struct of_device_id apple_h9p_pcie_of_match[] = {
++	{ .compatible = "apple,s8000-pcie" },
+ 	{ .compatible = "apple,s8003-pcie", .data = &apple_h9p_hw_s8003 },
+ 	{ .compatible = "apple,j172-pcie", .data = &apple_h9p_hw_j172 },
+ 	{ .compatible = "apple,t8015-pcie", .data = &apple_h9p_hw_t8015 },
