@@ -75,7 +75,7 @@ def parse(raw):
     results={}
     # Only standard controller descriptions from public restore images.
     wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage|wlan|wifi|wireless|bcm4345|hans)([-_,0-9]|$)",re.I)
-    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed"}
+    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed","apcie-phy-tunables","apcie-common-tunables","apcie-config-tunables","pcie-rc-tunables","apcie-port-tunables","phy-tunables","pcie-phy-tunables"}
     def visit(parent,depth):
         nonlocal pos,budget
         budget-=1
@@ -111,6 +111,10 @@ def selftest():
     bridge=struct.pack("<II",1,1)+prop("name",b"pci-bridge1\0")+wifi
     raw_wifi=struct.pack("<II",1,1)+prop("name",b"device-tree\0")+bridge
     assert parse(raw_wifi)["/device-tree/pci-bridge1/wlan-pcie,bcm4345"]=={"compatible":"wlan-pcie,bcm4345","function-device_wake":"01000000"}
+    # Preserve opaque tunable bytes; do not infer record format or apply writes.
+    phy=struct.pack("<II",3,0)+prop("name",b"apcie\0")+prop("apcie-phy-tunables",bytes(range(12)))+prop("serial-number",b"SECRET")
+    phy_tree=struct.pack("<II",1,1)+prop("name",b"device-tree\0")+phy
+    assert parse(phy_tree)=={"/device-tree/apcie":{"apcie-phy-tunables":bytes(range(12)).hex()}}
     for broken in [raw[:-1],b""]:
         try:parse(broken)
         except ValueError:pass
