@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import pathlib
+import plistlib
 import re
 import sys
 import struct
@@ -146,6 +147,44 @@ def macho_segments(raw):
         pos += size
     return segments
 
+def pcie_prelink_inventory(raw, segs):
+    # Use actual prelink metadata to constrain later function discovery.
+    info = next((s for s in segs if s[0] == "__PRELINK_INFO"), None)
+    if not info:
+        return {"status":"no prelink info segment"}
+    _, _, off, size, _ = info
+    if size > 8 * 1024 * 1024:
+        raise ValueError("prelink metadata exceeds cap")
+    data = raw[off:off+size]
+    begin = data.find(b"<?xml")
+    end = data.find(b"</plist>", max(0, begin))
+    if begin < 0 or end < 0:
+        return {"status":"prelink XML not found"}
+    try:
+        root = plistlib.loads(data[begin:end+len(b"</plist>")])
+    except (ValueError, TypeError, OverflowError, plistlib.InvalidFileException) as exc:
+        return {"status":f"prelink parse failed: {type(exc).__name__}"}
+    if not isinstance(root, dict):
+        return {"status":"unexpected prelink root"}
+    rows = root.get("_PrelinkInfoDictionary", [])
+    if not isinstance(rows, list) or len(rows)>4096:
+        return {"status":"unexpected prelink entries"}
+    wanted = {"com.apple.driver.AppleS8000PCIe", "com.apple.driver.AppleS8003PCIe", "com.apple.driver.AppleS800xPCIe"}
+    results = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("CFBundleIdentifier") not in wanted:
+            continue
+        result = {"bundle":row["CFBundleIdentifier"]}
+        for k in ("_PrelinkExecutableLoadAddr", "_PrelinkExecutableSourceAddr", "_PrelinkExecutableSize", "_PrelinkKmodInfo"):
+            v = row.get(k)
+            if isinstance(v, int):
+                result[k] = hex(v)
+            elif isinstance(v, str) and re.fullmatch(r"(?:0x[0-9a-fA-F]+|[0-9]+)", v):
+                result[k] = v
+        results.append(result)
+    return {"status":"parsed", "bundles":results,
+            "limitations":"Module metadata only; no function boundaries or register semantics inferred."}
+
 def literal_refs(raw):
     segs = macho_segments(raw)
     targets = {}
@@ -192,7 +231,8 @@ def literal_refs(raw):
                 hits.append({"segment":name,"adrp_pc":hex(pc),"string_address":hex(addr),"labels":sorted(targets[addr])})
                 if len(hits)>=256:
                     raise ValueError("reference inventory exceeds cap")
-    return {"segments":[{"name":n,"vm":hex(v),"file_offset":hex(o),"size":s,"protection":p} for n,v,o,s,p in segs],
+    return {"pcie_prelink":pcie_prelink_inventory(raw, segs),
+            "segments":[{"name":n,"vm":hex(v),"file_offset":hex(o),"size":s,"protection":p} for n,v,o,s,p in segs],
             "mapped_literals":[{"address":hex(a),"labels":sorted(v)} for a,v in sorted(targets.items())],
             "candidate_adjacent_adrp_add_refs":hits,
             "limitations":"Heuristic literal references only; no function boundaries or register writes inferred."}
