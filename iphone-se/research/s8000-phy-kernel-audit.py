@@ -233,6 +233,55 @@ def inspect_reference_windows(raw, segs, hits):
                         "limitations":"Nearby instructions only. Register bases, function boundaries, execution paths and MMIO meaning not established."})
     return reports
 
+def trace_diagnostic_callers(raw, segs, hits):
+    # Candidate cold diagnostic stub starts, inferred from the previous
+    # pinned-cache instruction report. Check the prologue before use.
+    starts = {
+        0xfffffff005feed40: "shared PHY read",
+        0xfffffff005feed80: "shared PHY write",
+        0xfffffff005ff0968: "Samsung port enable",
+        0xfffffff005ff09a8: "Samsung configure A",
+        0xfffffff005ff09e8: "Samsung configure B",
+        0xfffffff0068ccef4: "TSMC port enable comparison",
+    }
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    valid = {}
+    for addr, label in starts.items():
+        seg = next((s for s in segs if s[4]&4 and s[1]<=addr<s[1]+s[3]-4), None)
+        if not seg:
+            continue
+        _, vm, off, _, _ = seg
+        ins = next(md.disasm(raw[off+addr-vm:off+addr-vm+4], addr), None)
+        if ins and ins.mnemonic == "sub" and ins.op_str.startswith("sp, sp,"):
+            valid[addr] = label
+    callers = []
+    for name, vm, off, size, prot in segs:
+        if not prot&4:
+            continue
+        data = memoryview(raw)[off:off+(size&~3)]
+        for i, (word,) in enumerate(struct.iter_unpack("<I", data)):
+            if word&0x7c000000 != 0x14000000:
+                continue
+            imm = word&0x3ffffff
+            if imm&0x2000000:
+                imm -= 0x4000000
+            pc = vm+i*4
+            target = pc+imm*4
+            if target not in valid:
+                continue
+            lo = max(vm, pc-384)
+            hi = min(vm+size, pc+64)
+            window = [{"pc":hex(x.address),"mnemonic":x.mnemonic,"operands":x.op_str}
+                      for x in md.disasm(raw[off+lo-vm:off+hi-vm], lo)]
+            callers.append({"callsite":hex(pc),"target":hex(target),"label":valid[target],
+                            "window":window})
+            if len(callers)>=48:
+                raise ValueError("diagnostic caller count exceeds cap")
+    return {"checked_stubs":[{"address":hex(a),"label":l,"prologue_match":a in valid} for a,l in starts.items()],
+            "candidate_callers":callers,
+            "limitations":"Direct B/BL references to candidate diagnostic stubs; not proof of function boundaries or hardware register meanings."}
+
 def literal_refs(raw):
     segs = macho_segments(raw)
     targets = {}
@@ -284,6 +333,7 @@ def literal_refs(raw):
             "mapped_literals":[{"address":hex(a),"labels":sorted(v)} for a,v in sorted(targets.items())],
             "candidate_adjacent_adrp_add_refs":hits,
             "candidate_code_windows":inspect_reference_windows(raw, segs, hits),
+            "diagnostic_caller_trace":trace_diagnostic_callers(raw, segs, hits),
             "limitations":"Heuristic literal references only; no function boundaries or register writes inferred."}
 
 def main():
