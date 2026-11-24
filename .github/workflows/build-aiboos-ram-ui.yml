@@ -4,6 +4,9 @@ on:
     branches: [wifi-n69u-bringup]
     paths:
       - 'iphone-se/native/aiboos-fb.c'
+      - 'iphone-se/native/export-aiboos18-icons.cjs'
+      - 'iphone-se/native/rasterize-aiboos18-icons.py'
+      - 'AiboOS/Web/**'
       - '.github/workflows/build-aiboos-ram-ui.yml'
   workflow_dispatch:
 permissions:
@@ -16,19 +19,22 @@ jobs:
       - name: Install ARM64 compiler and emulator
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user-static
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user-static python3-cairosvg python3-pil
       - name: Compile and test native framebuffer
         run: |
           mkdir -p ram-ui
-          gcc -std=c11 -O2 -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o /tmp/aiboos-fb-host
+          node iphone-se/native/export-aiboos18-icons.cjs /tmp/aibo18-artwork
+          /usr/bin/python3 iphone-se/native/rasterize-aiboos18-icons.py /tmp/aibo18-artwork /tmp/aibo18-icons.h
+          cp /tmp/aibo18-artwork/layout.json ram-ui/
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DAIBO18_NATIVE -I/tmp iphone-se/native/aiboos-fb.c -o /tmp/aiboos-fb-host
           /tmp/aiboos-fb-host --selftest
-          aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o ram-ui/aiboos-fb
+          aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror -DAIBO18_NATIVE -I/tmp iphone-se/native/aiboos-fb.c -o ram-ui/aiboos-fb
           qemu-aarch64-static ram-ui/aiboos-fb --selftest
           file ram-ui/aiboos-fb
           git rev-parse HEAD > ram-ui/source-commit.txt
           (cd ram-ui && sha256sum aiboos-fb source-commit.txt > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: AiboOS-RAM-UI-White-OS
+          name: AiboOS-1.8-Native-Home-Development
           path: ram-ui/
           if-no-files-found: error
