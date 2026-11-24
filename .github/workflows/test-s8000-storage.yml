@@ -1,8 +1,8 @@
-name: Validate Samsung SE storage resource definitions
+name: Validate Samsung SE storage and Wi-Fi resource definitions
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [wifi-n69u-bringup]
     paths:
       - 'iphone-se/research/s8000-resource-map.py'
       - '.github/workflows/test-s8000-storage.yml'
@@ -18,7 +18,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: AiboOS-A9-SE-Controller-Comparison
-          run-id: 44959323214
+          run-id: 45325274723
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: public-adt
       - name: Build inactive Samsung hardware resource map
@@ -43,6 +43,9 @@ jobs:
           test "$(fdtget -t s "$F" /soc/pcie@610000000 compatible)" = apple,s8000-pcie
           test "$(fdtget -t s "$F" /soc/pcie@610000000 status)" = disabled
           test "$(fdtget -t s "$F" /soc/iommu@601008000 status)" = disabled
+          test "$(fdtget -t s "$F" /soc/iommu@602008000 status)" = disabled
+          test "$(fdtget -t x "$F" /soc/iommu@602008000 reg)" = "6 2008000 0 4000"
+          test "$(fdtget -t s "$F" /soc/iommu@602008000 compatible)" = "apple,s8000-dart apple,s5l8960x"
           test "$(fdtget -t s "$F" /soc/pcie@610000000 reg-names)" = "config rc phy port0 port1 port2 port3 nvmmu"
           echo "PASS Samsung metadata matches compiled inactive DTS; PHY initialization and hardware tests remain unimplemented." | tee samsung-storage-review/result.txt
       - uses: actions/upload-artifact@v4
