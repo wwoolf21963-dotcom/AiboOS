@@ -29,7 +29,28 @@ make -C "$K" ARCH=arm64 LLVM=1 olddefconfig
 for key in ARM64_16K_PAGES BLK_DEV_INITRD RD_GZIP DEVTMPFS EXT4_FS INPUT_EVDEV KEYBOARD_GPIO PCI PCI_MSI PCIE_APPLE_H9P APPLE_DART BLK_DEV_NVME NVME_CORE NVME_VERBOSE_ERRORS; do
     grep -qx "CONFIG_$key=y" "$K/.config"
 done
-make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 Image.gz dtbs
+# Compile the modules alongside the image from exactly the same source/config.
+# Do not enable the unfinished Samsung PCIe controller or change board trees.
+for key in CFG80211 BRCMFMAC; do
+    grep -qx "CONFIG_$key=m" "$K/.config"
+done
+grep -qx 'CONFIG_BRCMFMAC_PCIE=y' "$K/.config"
+make -C "$K" -j"$(nproc)" ARCH=arm64 LLVM=1 Image.gz dtbs modules
+release="$(make -s -C "$K" ARCH=arm64 LLVM=1 kernelrelease)"
+printf '%s\n' "$release" > "$OUT/kernel.release"
+STAGE="$RUNNER_TEMP/aiboos-a9-modules"
+mkdir -p "$STAGE"
+make -C "$K" ARCH=arm64 LLVM=1 INSTALL_MOD_PATH="$STAGE" INSTALL_MOD_STRIP=1 modules_install
+moddir="$STAGE/lib/modules/$release"
+# These build-host links are not usable in the RAM payload.
+rm -f "$moddir/build" "$moddir/source"
+depmod -b "$STAGE" "$release"
+test -s "$moddir/modules.dep"
+# Resolve the dependency closure using the host kmod tools without loading anything.
+modprobe -d "$STAGE" -S "$release" --show-depends brcmfmac > "$OUT/WIFI-MODULE-DEPENDENCIES.txt"
+grep -Eq '/brcmfmac\.ko(\.[a-z0-9]+)?([[:space:]]|$)' "$OUT/WIFI-MODULE-DEPENDENCIES.txt"
+grep -Eq '/cfg80211\.ko(\.[a-z0-9]+)?([[:space:]]|$)' "$OUT/WIFI-MODULE-DEPENDENCIES.txt"
+tar -C "$STAGE" -czf "$OUT/kernel-modules.tar.gz" lib/modules
 cp "$K/arch/arm64/boot/Image.gz" "$OUT/"
 cp "$K/.config" "$OUT/kernel.config"
 for board in s8000-n69u s8003-n69; do
@@ -63,7 +84,7 @@ for board,compatible in [("s8000-n69u","apple,n69u"),("s8003-n69","apple,n69")]:
 report.append("No A9 storage driver has been validated on an iPhone. No phone accessed.")
 report.append("Selected effective kernel configuration:")
 for line in (out/"kernel.config").read_text().splitlines():
-    if any(x in line for x in ("CONFIG_NVME","CONFIG_BLK_DEV_NVME","CONFIG_PCIE_APPLE","CONFIG_APPLE_DART","CONFIG_TOUCHSCREEN_APPLE","CONFIG_SND_SOC_APPLE","CONFIG_USB_CONFIGFS_ACM","CONFIG_DRM_SIMPLEDRM")):
+    if any(x in line for x in ("CONFIG_NVME","CONFIG_BLK_DEV_NVME","CONFIG_PCIE_APPLE","CONFIG_APPLE_DART","CONFIG_TOUCHSCREEN_APPLE","CONFIG_SND_SOC_APPLE","CONFIG_USB_CONFIGFS_ACM","CONFIG_DRM_SIMPLEDRM","CONFIG_BRCMFMAC","CONFIG_CFG80211","CONFIG_MAC80211")):
         report.append(line)
 (out/"HARDWARE-REPORT.txt").write_text("\n".join(report)+"\n")
 print("\n".join(report))
@@ -74,8 +95,10 @@ cat > "$OUT/READ_ME.txt" <<'TXT'
 AiboOS native OrchardLinux A9 kernel evaluation
 Includes both original iPhone SE board trees, kernel configuration, hardware
 audit and current ARM64 root filesystem. No phone transport or flash operation.
-This is NOT an iPhone installer. The kernel and root filesystem have not been
-boot-tested together on an iPhone. The TSMC storage controller remains disabled
+This is NOT an iPhone installer. The newly produced image and modules are not
+hardware-validated. Use modules only with the exact Image.gz from this build.
+Broadcom modules are provided for development; PCIe bring-up and firmware are
+still required. The TSMC storage controller remains disabled
 for the SE in the upstream device tree. No speculative hardware definitions.
 TXT
-(cd "$OUT" && sha256sum Image.gz apple-dtbs/*.dtb kernel.config kernel-commit.txt 0001-h9p-independent-phy-resources.patch AiboOS-ARM64-rootfs.ext4.xz HARDWARE-REPORT.txt > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+(cd "$OUT" && sha256sum Image.gz apple-dtbs/*.dtb kernel.config kernel-commit.txt kernel.release kernel-modules.tar.gz WIFI-MODULE-DEPENDENCIES.txt 0001-h9p-independent-phy-resources.patch AiboOS-ARM64-rootfs.ext4.xz HARDWARE-REPORT.txt > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
