@@ -200,6 +200,39 @@ def pcie_prelink_inventory(raw, segs):
     return {"status":"parsed", "bundles":results,
             "limitations":"Module metadata only; no function boundaries or register semantics inferred."}
 
+def inspect_reference_windows(raw, segs, hits):
+    """Summarize nearby ARM64 control flow and memory accesses.
+    These are bounded windows, not verified functions or MMIO operations.
+    """
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    from capstone.arm64 import ARM64_OP_IMM, ARM64_OP_MEM
+    md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    md.detail = True
+    md.skipdata = False
+    reports = []
+    for hit in hits[:16]:
+        pc = int(hit["adrp_pc"], 16)
+        seg = next((s for s in segs if s[4] & 4 and s[1] <= pc < s[1]+s[3]), None)
+        if seg is None:
+            continue
+        name, vm, off, size, _ = seg
+        lo = max(vm, pc-512)
+        hi = min(vm+size, pc+128)
+        operations = []
+        for ins in md.disasm(raw[off+lo-vm:off+hi-vm], lo):
+            m = ins.mnemonic
+            if m in ("bl", "b", "blr", "ret") or m.startswith(("b.", "cb", "tb")):
+                operations.append({"pc":hex(ins.address),"kind":"control","mnemonic":m,"operands":ins.op_str})
+            elif m.startswith(("ldr","ldp","str","stp","ldur","stur")):
+                for operand in ins.operands:
+                    if operand.type == ARM64_OP_MEM:
+                        operations.append({"pc":hex(ins.address),"kind":"memory","mnemonic":m,"operands":ins.op_str})
+                        break
+        reports.append({"reference":hit,"window_start":hex(lo),"window_end":hex(hi),
+                        "operations":operations,
+                        "limitations":"Nearby instructions only. Register bases, function boundaries, execution paths and MMIO meaning not established."})
+    return reports
+
 def literal_refs(raw):
     segs = macho_segments(raw)
     targets = {}
@@ -250,6 +283,7 @@ def literal_refs(raw):
             "segments":[{"name":n,"vm":hex(v),"file_offset":hex(o),"size":s,"protection":p} for n,v,o,s,p in segs],
             "mapped_literals":[{"address":hex(a),"labels":sorted(v)} for a,v in sorted(targets.items())],
             "candidate_adjacent_adrp_add_refs":hits,
+            "candidate_code_windows":inspect_reference_windows(raw, segs, hits),
             "limitations":"Heuristic literal references only; no function boundaries or register writes inferred."}
 
 def main():
