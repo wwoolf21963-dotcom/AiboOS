@@ -156,12 +156,27 @@ def pcie_prelink_inventory(raw, segs):
     if size > 8 * 1024 * 1024:
         raise ValueError("prelink metadata exceeds cap")
     data = raw[off:off+size]
-    begin = data.find(b"<?xml")
-    end = data.find(b"</plist>", max(0, begin))
-    if begin < 0 or end < 0:
-        return {"status":"prelink XML not found"}
+    # Kernel prelink metadata may be a bare IOKit XML dictionary rather
+    # than a complete plist document with XML declaration.
+    payload = data.strip(b"\0 \r\n\t")
+    begin = payload.find(b"<?xml")
+    if begin < 0:
+        begin = payload.find(b"<plist")
+    if begin >= 0:
+        end = payload.rfind(b"</plist>")
+        if end < begin:
+            return {"status":"incomplete plist envelope"}
+        payload = payload[begin:end+len(b"</plist>")]
+    elif payload.startswith(b"<dict") or payload.startswith(b"<array"):
+        close = b"</dict>" if payload.startswith(b"<dict") else b"</array>"
+        end = payload.rfind(close)
+        if end < 0:
+            return {"status":"incomplete bare prelink XML"}
+        payload = b'<plist version="1.0">' + payload[:end+len(close)] + b"</plist>"
+    elif not payload.startswith(b"bplist00"):
+        return {"status":"prelink format not recognized", "prefix_hex":payload[:32].hex(), "size":len(payload)}
     try:
-        root = plistlib.loads(data[begin:end+len(b"</plist>")])
+        root = plistlib.loads(payload)
     except (ValueError, TypeError, OverflowError, plistlib.InvalidFileException) as exc:
         return {"status":f"prelink parse failed: {type(exc).__name__}"}
     if not isinstance(root, dict):
