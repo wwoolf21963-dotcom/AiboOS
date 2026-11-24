@@ -2,7 +2,7 @@ name: Compare A9 SE public firmware hardware descriptions
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, wifi-n69u-bringup]
     paths:
       - '.github/workflows/a9-firmware-hardware.yml'
       - 'iphone-se/research/compare-firmware-trees.py'
