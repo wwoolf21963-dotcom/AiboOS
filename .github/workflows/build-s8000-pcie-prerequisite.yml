@@ -1,10 +1,11 @@
-name: Compile Samsung PCIe driver prerequisite
+name: Compile SPHYD Samsung PCIe preflight
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, wifi-n69u-bringup]
     paths:
       - 'iphone-se/kernel-patches/0001-h9p-independent-phy-resources.patch'
+      - 'iphone-se/kernel-patches/0002-s8000-phy-preflight.patch'
       - '.github/workflows/build-s8000-pcie-prerequisite.yml'
 permissions:
   contents: read
@@ -31,6 +32,9 @@ jobs:
           P="$PWD/iphone-se/kernel-patches/0001-h9p-independent-phy-resources.patch"
           git -C "$K" apply --check "$P"
           git -C "$K" apply "$P"
+          P="$PWD/iphone-se/kernel-patches/0002-s8000-phy-preflight.patch"
+          git -C "$K" apply --check "$P"
+          git -C "$K" apply "$P"
           git -C "$K" diff --check
           make -C "$K" ARCH=arm64 LLVM=1 orchard_apple16k_defconfig
           "$K/scripts/config" --file "$K/.config" --enable PCI --enable PCI_MSI --enable PCIE_APPLE_H9P
@@ -42,9 +46,9 @@ jobs:
           llvm-readelf -h report/pcie-apple-h9p.o | tee report/elf-header.txt
           grep -q AArch64 report/elf-header.txt
           git -C "$K" diff > report/applied.patch
-          printf '%s\n' 'Compiled driver prerequisite only. No Samsung PHY initialization or hardware test.' > report/result.txt
+          printf '%s\n' 'Compiled Samsung preflight only. Probe intentionally returns EOPNOTSUPP; no Samsung PHY initialization or hardware test.' > report/result.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: S8000-PCIE-DRIVER-PREREQUISITE
+          name: S8000-SPHYD-PREFLIGHT
           path: report/
           if-no-files-found: error
