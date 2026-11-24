@@ -1,0 +1,34 @@
+name: Build native AiboOS RAM UI
+on:
+  push:
+    branches: [wifi-n69u-bringup]
+    paths:
+      - 'iphone-se/native/aiboos-fb.c'
+      - '.github/workflows/build-aiboos-ram-ui.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 compiler and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user-static
+      - name: Compile and test native framebuffer
+        run: |
+          mkdir -p ram-ui
+          gcc -std=c11 -O2 -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o /tmp/aiboos-fb-host
+          /tmp/aiboos-fb-host --selftest
+          aarch64-linux-gnu-gcc -std=c11 -O2 -static -Wall -Wextra -Werror iphone-se/native/aiboos-fb.c -o ram-ui/aiboos-fb
+          qemu-aarch64-static ram-ui/aiboos-fb --selftest
+          file ram-ui/aiboos-fb
+          git rev-parse HEAD > ram-ui/source-commit.txt
+          (cd ram-ui && sha256sum aiboos-fb source-commit.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-RAM-UI-White-OS
+          path: ram-ui/
+          if-no-files-found: error
