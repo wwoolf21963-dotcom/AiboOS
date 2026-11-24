@@ -282,6 +282,57 @@ def trace_diagnostic_callers(raw, segs, hits):
             "candidate_callers":callers,
             "limitations":"Direct B/BL references to candidate diagnostic stubs; not proof of function boundaries or hardware register meanings."}
 
+def resolve_shared_dispatch(raw, segs):
+    """Follow observed superclass dispatch slots from the pinned cache.
+    Accept only unambiguous mapped pointers; do not guess pointer encodings.
+    """
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    slots = (
+        ("Samsung port enable", 0xfffffff006e40dc8, 0x728),
+        ("TSMC port enable", 0xfffffff006f73bc8, 0x728),
+        ("Samsung configure", 0xfffffff006e40dc0, 0x5e8),
+    )
+    def locate(addr, count, executable=False):
+        matches = [off+addr-vm for _,vm,off,size,prot in segs
+                   if vm <= addr and addr+count <= vm+size and (not executable or prot&4)]
+        return matches[0] if len(matches)==1 else None
+    def pointer(addr):
+        off = locate(addr, 8)
+        return struct.unpack_from("<Q",raw,off)[0] if off is not None else None
+    rows = []
+    for label, slot, delta in slots:
+        row = {"label":label,"global_slot":hex(slot),"dispatch_offset":hex(delta)}
+        base = pointer(slot)
+        row["raw_table_pointer"] = hex(base) if base is not None else None
+        if base is None or locate(base+delta, 8) is None:
+            row["status"] = "unresolved table pointer"
+            rows.append(row)
+            continue
+        dest = pointer(base+delta)
+        row["raw_function_pointer"] = hex(dest) if dest is not None else None
+        off = locate(dest, 4, True) if dest is not None else None
+        if off is None:
+            row["status"] = "unresolved function pointer"
+        else:
+            row["status"] = "mapped executable candidate"
+            # Stop at 128 instructions, not an asserted function boundary.
+            instructions = []
+            for i in range(128):
+                address = dest+4*i
+                fileoff = locate(address,4,True)
+                if fileoff is None:
+                    break
+                ins = next(md.disasm(raw[fileoff:fileoff+4],address),None)
+                if ins is None:
+                    break
+                instructions.append({"pc":hex(address),"mnemonic":ins.mnemonic,"operands":ins.op_str})
+                if ins.mnemonic == "ret":
+                    break
+            row["candidate_instructions"] = instructions
+        rows.append(row)
+    return {"dispatch":rows,"limitations":"Static pointer reads; no relocations assumed, no function or hardware semantics inferred."}
+
 def literal_refs(raw):
     segs = macho_segments(raw)
     targets = {}
@@ -334,6 +385,7 @@ def literal_refs(raw):
             "candidate_adjacent_adrp_add_refs":hits,
             "candidate_code_windows":inspect_reference_windows(raw, segs, hits),
             "diagnostic_caller_trace":trace_diagnostic_callers(raw, segs, hits),
+            "shared_dispatch":resolve_shared_dispatch(raw, segs),
             "limitations":"Heuristic literal references only; no function boundaries or register writes inferred."}
 
 def main():
