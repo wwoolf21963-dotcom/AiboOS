@@ -1,0 +1,54 @@
+name: Build AiboOS 1.8 ARM64 graphical runtime
+on:
+  workflow_dispatch:
+  push:
+    branches: [wifi-n69u-bringup]
+    paths:
+      - '.github/workflows/build-aiboos18-runtime.yml'
+      - 'iphone-se/native/aiboos18/**'
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install cross bootstrap tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support debian-archive-keyring zstd
+          sudo update-binfmts --enable qemu-aarch64
+      - name: Build separate ARM64 userspace (not flashable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          FS="$RUNNER_TEMP/aibo18-arm64"
+          OUT="$PWD/aibo18-runtime"
+          mkdir -p "$OUT"
+          bash iphone-se/native/aiboos18/package-release.sh "$RUNNER_TEMP/aibo18-app"
+          sudo debootstrap --arch=arm64 --foreign --variant=minbase --keyring=/usr/share/keyrings/debian-archive-keyring bookworm "$FS" https://deb.debian.org/debian
+          sudo install -m 755 /usr/bin/qemu-aarch64-static "$FS/usr/bin/qemu-aarch64-static"
+          sudo chroot "$FS" /debootstrap/debootstrap --second-stage
+          sudo chroot "$FS" /bin/sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xauth dbus-x11 ca-certificates fonts-dejavu-core'
+          sudo install -d "$FS/opt/aiboos18"
+          sudo cp -a "$RUNNER_TEMP/aibo18-app/." "$FS/opt/aiboos18/"
+          sudo chroot "$FS" useradd -m -s /bin/sh aiboos
+          sudo chroot "$FS" /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0"); gi.require_version("WebKit2","4.1"); from gi.repository import Gtk, WebKit2; print("ARM64 GTK and WebKit imports passed")'
+          sudo chroot "$FS" /usr/bin/python3 -m py_compile /opt/aiboos18/system-shell.py
+          sudo chroot "$FS" /bin/sh -c 'cd /opt/aiboos18 && sha256sum -c WEB-SHA256SUMS && apt-get clean'
+          sudo rm -f "$FS/usr/bin/qemu-aarch64-static"
+          sudo rm -rf "$FS/var/lib/apt/lists/"*
+          sudo du -sh "$FS" | tee "$OUT/UNPACKED-SIZE.txt"
+          sudo tar --numeric-owner -C "$FS" -cf - . | zstd -T2 -5 -o "$OUT/AiboOS-1.8-ARM64-runtime.tar.zst"
+          zstd -t "$OUT/AiboOS-1.8-ARM64-runtime.tar.zst"
+          printf '%s\n' 'Development userspace only. Original 1.8 application, ARM64 GTK/WebKit and framebuffer Xorg packages. No verified device startup, touchscreen, networking, persistent storage, or GUI rendering. Do not flash. Assess RAM budget before integration.' > "$OUT/READ_ME.txt"
+          (cd "$OUT" && sha256sum *.tar.zst > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiboOS-1.8-ARM64-Graphical-Runtime-DEVELOPMENT
+          path: aibo18-runtime/
+          if-no-files-found: error
+          retention-days: 14
