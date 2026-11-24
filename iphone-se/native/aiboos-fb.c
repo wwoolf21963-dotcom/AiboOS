@@ -120,7 +120,7 @@ static void render(struct screen *s) {
 enum { PAGE_HOME, PAGE_CONNECTION, PAGE_SYSTEM, PAGE_SETTINGS, PAGE_SOUND, PAGE_POWER, PAGE_SECURITY, PAGE_COUNT };
 enum { ACTION_SILENT, ACTION_DIM, ACTION_HOME, ACTION_OFF, ACTION_COUNT };
 enum { TONE_NONE, TONE_CLICK, TONE_CHIME, TONE_MP3, TONE_COUNT };
-struct switch_ui { int page, action, sound, position, silent, toast; long long until; };
+struct switch_ui { int page, selected, action, sound, position, silent, toast; long long until; };
 static const char *actions[]={"SILENT MODE","DIM UI","OPEN HOME","DISABLED"};
 static const char *sounds[]={"NONE","SOFT CLICK","CHIME","CUSTOM MP3"};
 static long long now_ms(void) {
@@ -128,14 +128,22 @@ static long long now_ms(void) {
     if(clock_gettime(CLOCK_MONOTONIC,&t)<0) return 0;
     return (long long)t.tv_sec*1000+t.tv_nsec/1000000;
 }
-static int navigate(int page, const struct input_event *ev) {
-    if (ev->type != EV_KEY || ev->value != 1) return page;
-    switch (ev->code) {
-        case KEY_VOLUMEUP: case KEY_UP: return (page + 1) % PAGE_COUNT;
-        case KEY_VOLUMEDOWN: case KEY_DOWN: return (page + PAGE_COUNT - 1) % PAGE_COUNT;
-        case KEY_HOME: case KEY_HOMEPAGE: return PAGE_HOME;
-        default: return page;
+/* Physical navigation: volume selects icons, Home opens/returns.
+ * Inside settings/sound, volume changes the selected option. */
+static int navigate(struct switch_ui *u, const struct input_event *ev) {
+    if (ev->type != EV_KEY || ev->value != 1) return 0;
+    int direction=ev->code==KEY_VOLUMEUP||ev->code==KEY_UP?1:
+                  ev->code==KEY_VOLUMEDOWN||ev->code==KEY_DOWN?-1:0;
+    if(ev->code==KEY_HOME||ev->code==KEY_HOMEPAGE){
+        u->page=u->page==PAGE_HOME?u->selected+1:PAGE_HOME;
+        return 1;
     }
+    if(!direction)return 0;
+    if(u->page==PAGE_HOME){
+        u->selected=(u->selected+direction+PAGE_COUNT-1)%(PAGE_COUNT-1);
+        return 1;
+    }
+    return 0;
 }
 static void publish_silent(const struct switch_ui *u) {
     /* AiboOS alert policy, not a claim that the hardware mixer is working. */
@@ -198,7 +206,74 @@ static void island(struct screen *s,const struct switch_ui *u){
     int ts=w>=400?3:2;
     text(s,x+18*k,y+(ph-7*ts)/2,label,ts,color);
 }
+static void launcher_icon(struct screen *s,int x,int y,int side,int app){
+    const uint32_t colors[]={0x597fdb,0x8b55be,0x59637b,0xe46ca8,0x36a989,0x7957c2};
+    int k=side/12;if(k<1)k=1;
+    int cx=x+side/2,cy=y+side/2;
+    rect(s,x+k,y,side-2*k,side,colors[app]);
+    rect(s,x,y+k,side,side-2*k,colors[app]);
+    circle(s,x+k,y+k,k,colors[app]);circle(s,x+side-k-1,y+k,k,colors[app]);
+    circle(s,x+k,y+side-k-1,k,colors[app]);circle(s,x+side-k-1,y+side-k-1,k,colors[app]);
+    uint32_t c=0xffffff;
+    switch(app){
+      case 0: /* connection */
+        for(int i=0;i<3;i++)rect(s,cx-4*k+i*3*k,cy+(2-i*2)*k,2*k,(i*2+2)*k,c);
+        break;
+      case 1: /* system chip */
+        rect(s,cx-3*k,cy-3*k,6*k,6*k,c);
+        rect(s,cx-2*k,cy-2*k,4*k,4*k,colors[app]);
+        for(int i=-2;i<=2;i+=2){rect(s,cx+i*k,cy-4*k,k,8*k,c);rect(s,cx-4*k,cy+i*k,8*k,k,c);}
+        break;
+      case 2: /* settings */
+        for(int i=-3;i<=3;i+=3){rect(s,cx-4*k,cy+i*k,8*k,k,c);circle(s,cx+(i==0?2:-2)*k,cy+i*k,k+1,c);}
+        break;
+      case 3: /* sound */
+        rect(s,cx-3*k,cy-k,2*k,3*k,c);rect(s,cx-k,cy-3*k,2*k,7*k,c);
+        for(int i=0;i<3;i++)rect(s,cx+2*k+i*k,cy-(i+1)*k,k,(i+1)*2*k,c);
+        break;
+      case 4: /* battery */
+        rect(s,cx-4*k,cy-2*k,8*k,4*k,c);rect(s,cx+4*k,cy-k,k,2*k,c);
+        rect(s,cx-3*k,cy-k,5*k,2*k,colors[app]);break;
+      case 5: /* security */
+        circle(s,cx,cy-2*k,3*k,c);circle(s,cx,cy-2*k,2*k,colors[app]);
+        rect(s,cx-4*k,cy-k,8*k,5*k,c);rect(s,cx,cy+k,k,2*k,colors[app]);break;
+    }
+}
+static void launcher(struct screen *s,const struct switch_ui *u){
+    int w=(int)s->w,h=(int)s->h;
+    int scale=w>=480?3:w>=300?2:1;
+    int brand=w>=400?5:3;
+    for(int y=0;y<h;y++){
+        unsigned r=31u+36u*(unsigned)y/(unsigned)h;
+        unsigned b=53u+22u*(unsigned)y/(unsigned)h;
+        rect(s,0,y,w,1,(r<<16)|(19u<<8)|b);
+    }
+    text(s,16,12,"AIBO",brand,0xff91c1);
+    text(s,16+24*brand,12,"OS",brand,0xffffff);
+    text(s,18+36*brand,12,"TM",2,0xff91c1);
+    int top=12+7*brand+14,foot=7*scale+14;
+    int cellw=w/3,cellh=(h-top-foot)/2;
+    int side=cellw-18;
+    if(side>cellh-7*scale-12)side=cellh-7*scale-12;
+    if(side>112)side=112;
+    if(side<12)side=12;
+    static const char *names[]={"CONNECT","SYSTEM","SETTINGS","SOUND","BATTERY","SECURITY"};
+    for(int i=0;i<PAGE_COUNT-1;i++){
+        int cx=(i%3)*cellw+cellw/2,cy=top+(i/3)*cellh;
+        int x=cx-side/2,y=cy+(cellh-side-7*scale)/2;
+        if(i==u->selected)rect(s,x-4,y-4,side+8,side+8,0xffb1d9);
+        launcher_icon(s,x,y,side,i);
+        int labelscale=scale;
+        if((int)strlen(names[i])*6*labelscale>cellw-4)labelscale=1;
+        text(s,cx-(int)strlen(names[i])*3*labelscale,y+side+6,names[i],labelscale,0xffffff);
+    }
+    const char *hint="VOLUME SELECT  HOME OPEN";
+    int hs=(int)strlen(hint)*6*scale>w-12?1:scale;
+    text(s,(w-(int)strlen(hint)*6*hs)/2,h-7*hs-7,hint,hs,0xffc2df);
+    island(s,u);
+}
 static void shell_page(struct screen *s,const struct switch_ui *u) {
+    if(u->page==PAGE_HOME){launcher(s,u);return;}
     int w=(int)s->w,h=(int)s->h,k=w>=600?3:2,page=u->page;
     uint32_t bg=(u->action==ACTION_DIM && u->position==1)?0x08060c:0x191328;
     rect(s,0,0,w,h,bg);
@@ -218,8 +293,8 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
         {"NATIVE LINUX","VOLUME KEYS TO MOVE",u->silent?"SILENT ON":u->position<0?"SWITCH UNKNOWN":"SILENT OFF"},
         {"USB SERIAL","WIFI NOT VERIFIED","TOUCH NOT REQUIRED"},
         {"ARM64 A9","DEVELOPMENT BUILD","NO RAW DISK WRITES"},
-        {actions[u->action],"HOME TO CHANGE","VOLUME TO NAVIGATE"},
-        {sounds[u->sound],"HOME TO CHANGE",u->sound==TONE_MP3?"LOCAL MP3 FILE":"VOLUME TO NAVIGATE"},
+        {actions[u->action],"VOLUME TO CHANGE","HOME TO RETURN"},
+        {sounds[u->sound],"VOLUME TO CHANGE",u->sound==TONE_MP3?"LOCAL MP3 FILE":"HOME TO RETURN"},
         {battery,power_status(p),temp},
         {"TOUCH ID UNSUPPORTED","HOME BUTTON ONLY","NO BIOMETRIC ENROLLMENT"}
     };
@@ -229,7 +304,7 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
         rect(s,12,a+i*step,w-24,step-3,bg==0x08060c?0x15101c:0x332440);
         text(s,20,a+i*step+5,lines[page][i],w>=600?3:2,0xffc2df);
     }
-    for(int i=0;i<PAGE_COUNT;i++)rect(s,w/2-(PAGE_COUNT*18)/2+i*18,h-22,12,8,i==page?0xff91c1:0x65536f);
+    text(s,16,h-22,"HOME TO RETURN",2,0xff91c1);
     island(s,u);
 }
 /* Small local tone synthesizer. Playback is optional native ALSA PCM.
@@ -396,17 +471,20 @@ static int run_ui(struct screen *s) {
                         if(old!=u.position){publish_silent(&u);shell_page(s,&u);if(alert)play_async(u.sound,u.position);}
                         continue;
                     }
-                    if(ev.type==EV_KEY&&ev.value==1&&(ev.code==KEY_HOME||ev.code==KEY_HOMEPAGE)){
-                        if(u.page==PAGE_SETTINGS){
-                            u.action=(u.action+1)%ACTION_COUNT;u.silent=(u.action==ACTION_SILENT&&u.position==1);u.toast=0;
+                    if(ev.type==EV_KEY&&ev.value==1){
+                        int direction=ev.code==KEY_VOLUMEUP||ev.code==KEY_UP?1:
+                                      ev.code==KEY_VOLUMEDOWN||ev.code==KEY_DOWN?-1:0;
+                        if(direction&&u.page==PAGE_SETTINGS){
+                            u.action=(u.action+direction+ACTION_COUNT)%ACTION_COUNT;
+                            u.silent=(u.action==ACTION_SILENT&&u.position==1);u.toast=0;
                             publish_silent(&u);save_settings(&u);shell_page(s,&u);continue;
                         }
-                        if(u.page==PAGE_SOUND){
-                            u.sound=(u.sound+1)%TONE_COUNT;save_settings(&u);shell_page(s,&u);play_async(u.sound,u.position);continue;
+                        if(direction&&u.page==PAGE_SOUND){
+                            u.sound=(u.sound+direction+TONE_COUNT)%TONE_COUNT;
+                            save_settings(&u);shell_page(s,&u);play_async(u.sound,u.position);continue;
                         }
                     }
-                    int next=navigate(u.page,&ev);
-                    if(next!=u.page){u.page=next;shell_page(s,&u);}
+                    if(navigate(&u,&ev))shell_page(s,&u);
                 }
             }
         }
@@ -430,14 +508,22 @@ static int selftest(void) {
     memcpy(&value, buf+(25*320+149)*4, 4);
     if (value != 0xffffffu) return 17;
     struct input_event ev={.type=EV_KEY,.code=KEY_VOLUMEUP,.value=1};
-    if(navigate(PAGE_HOME,&ev)!=PAGE_CONNECTION) return 4;
-    ev.value=2;
-    if(navigate(PAGE_CONNECTION,&ev)!=PAGE_CONNECTION) return 5;
-    ev.value=1;ev.code=KEY_VOLUMEDOWN;
-    if(navigate(PAGE_HOME,&ev)!=PAGE_SECURITY) return 6;
-    ev.code=KEY_HOME;
-    if(navigate(PAGE_SYSTEM,&ev)!=PAGE_HOME) return 7;
     struct switch_ui u={.position=-1,.action=ACTION_SILENT,.sound=TONE_CLICK};
+    if(!navigate(&u,&ev)||u.page!=PAGE_HOME||u.selected!=1)return 4;
+    ev.value=2;if(navigate(&u,&ev)||u.selected!=1)return 5;
+    ev.value=1;ev.code=KEY_VOLUMEDOWN;
+    if(!navigate(&u,&ev)||u.selected!=0)return 6;
+    ev.code=KEY_HOME;
+    if(!navigate(&u,&ev)||u.page!=PAGE_CONNECTION)return 7;
+    if(!navigate(&u,&ev)||u.page!=PAGE_HOME)return 18;
+    ev.code=KEY_VOLUMEDOWN;
+    if(!navigate(&u,&ev)||u.selected!=PAGE_COUNT-2)return 19;
+    ev.code=KEY_HOME;
+    if(!navigate(&u,&ev)||u.page!=PAGE_SECURITY)return 20;
+    if(!navigate(&u,&ev)||u.page!=PAGE_HOME)return 21;
+    launcher(&s,&u);
+    memcpy(&value,buf+(12*320+19)*4,4);
+    if(value!=0xff91c1u)return 22;
     if(set_switch(&u,0,0,0)||u.silent||u.toast) return 8;
     if(!set_switch(&u,1,1,100)||!u.silent||!u.toast||u.until!=2400) return 9;
     if(set_switch(&u,1,1,101)) return 10;
