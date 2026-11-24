@@ -151,11 +151,18 @@ def literal_refs(raw):
     targets = {}
     for label in TARGETS:
         start = 0
-        while (off := raw.find(label+b"\0", start)) >= 0:
+        while (off := raw.find(label, start)) >= 0:
+            # Diagnostic format strings often contain the routine label rather
+            # than terminating immediately after it. Include the printable
+            # string start and label offset as distinct reference candidates.
+            first = off
+            while first > max(0, off-256) and 32 <= raw[first-1] < 127:
+                first -= 1
             for name, vm, base, size, prot in segs:
-                if base <= off < base+size:
-                    address = vm+off-base
-                    targets.setdefault(address, set()).add(label.decode())
+                for candidate in {first, off}:
+                    if base <= candidate < base+size:
+                        address = vm+candidate-base
+                        targets.setdefault(address, set()).add(label.decode())
             start = off+len(label)
     pages = {addr & ~4095 for addr in targets}
     hits = []
