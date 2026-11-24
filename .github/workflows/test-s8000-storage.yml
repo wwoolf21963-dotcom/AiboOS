@@ -39,14 +39,38 @@ jobs:
           cat samsung-storage-review/s8000-n69u-storage.dtsi >> "$DIR/s8000-n69u.dts"
           make -C "$K" ARCH=arm64 LLVM=1 apple/s8000-n69u.dtb
           F="$DIR/s8000-n69u.dtb"
-          fdtget -t s "$F" / compatible | grep -w apple,n69u
-          test "$(fdtget -t s "$F" /soc/pcie@610000000 compatible)" = apple,s8000-pcie
-          test "$(fdtget -t s "$F" /soc/pcie@610000000 status)" = disabled
-          test "$(fdtget -t s "$F" /soc/iommu@601008000 status)" = disabled
-          test "$(fdtget -t s "$F" /soc/iommu@602008000 status)" = disabled
-          test "$(fdtget -t x "$F" /soc/iommu@602008000 reg)" = "6 2008000 0 4000"
-          test "$(fdtget -t s "$F" /soc/iommu@602008000 compatible)" = "apple,s8000-dart apple,s5l8960x"
-          test "$(fdtget -t s "$F" /soc/pcie@610000000 reg-names)" = "config rc phy port0 port1 port2 port3 nvmmu"
+          # Print all actual values before failing, so the failing property is visible.
+          python3 - "$F" <<'PY'
+          import subprocess
+          import sys
+
+          dtb = sys.argv[1]
+          checks = [
+              ("/", "compatible", "s", "apple,n69u", "contains"),
+              ("/soc/pcie@610000000", "compatible", "s", "apple,s8000-pcie", "equal"),
+              ("/soc/pcie@610000000", "status", "s", "disabled", "equal"),
+              ("/soc/iommu@601008000", "status", "s", "disabled", "equal"),
+              ("/soc/iommu@602008000", "status", "s", "disabled", "equal"),
+              ("/soc/iommu@602008000", "reg", "x", [0x6, 0x02008000, 0, 0x4000], "equal"),
+              ("/soc/iommu@602008000", "compatible", "s", "apple,s8000-dart apple,s5l8960x", "equal"),
+              ("/soc/pcie@610000000", "reg-names", "s", "config rc phy port0 port1 port2 port3 nvmmu", "equal"),
+          ]
+          failures = []
+          for node, prop, kind, expected, mode in checks:
+              proc = subprocess.run(["fdtget", "-t", kind, dtb, node, prop],
+                                    capture_output=True, text=True)
+              actual = proc.stdout.strip()
+              if kind == "x" and proc.returncode == 0:
+                  actual = [int(cell, 16) for cell in actual.split()]
+              ok = proc.returncode == 0 and (expected in actual.split() if mode == "contains" else actual == expected)
+              print(f"{'PASS' if ok else 'FAIL'} {node} {prop}: actual={actual!r}; expected={expected!r}", flush=True)
+              if not ok:
+                  failures.append((node, prop))
+                  if proc.stderr:
+                      print(proc.stderr.strip(), flush=True)
+          if failures:
+              raise SystemExit(f"Validation failed: {failures!r}")
+          PY
           echo "PASS Samsung metadata matches compiled inactive DTS; PHY initialization and hardware tests remain unimplemented." | tee samsung-storage-review/result.txt
       - uses: actions/upload-artifact@v4
         with:
