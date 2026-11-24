@@ -8,6 +8,8 @@ import json
 import pathlib
 import re
 import sys
+import struct
+import zlib
 import urllib.request
 import zipfile
 
@@ -38,6 +40,49 @@ class KernelRange(adt.RangeFile):
             n -= count
         return b"".join(pieces)
 
+def unpack_lzss(raw):
+    # Apple complzss: 0x180-byte header, big-endian checksum and sizes.
+    if len(raw) < 0x180 or raw[:8] != b"complzss":
+        raise ValueError("invalid LZSS header")
+    checksum, size, packed = struct.unpack_from(">III", raw, 8)
+    if not 0 < size <= 256 * 1024 * 1024 or not 0 < packed <= len(raw) - 0x180:
+        raise ValueError("invalid LZSS sizes")
+    data = memoryview(raw)[0x180:0x180 + packed]
+    ring = bytearray(b" " * 4096)
+    cursor = 4096 - 18
+    pos = 0
+    out = bytearray()
+    while pos < len(data) and len(out) < size:
+        flags = data[pos]
+        pos += 1
+        for bit in range(8):
+            if len(out) == size:
+                break
+            if pos >= len(data):
+                raise ValueError("truncated LZSS stream")
+            if flags & (1 << bit):
+                value = data[pos]
+                pos += 1
+                out.append(value)
+                ring[cursor] = value
+                cursor = (cursor + 1) & 4095
+            else:
+                if pos + 2 > len(data):
+                    raise ValueError("truncated LZSS pair")
+                index = data[pos] | ((data[pos + 1] & 0xf0) << 4)
+                count = (data[pos + 1] & 15) + 3
+                pos += 2
+                if len(out) + count > size:
+                    raise ValueError("LZSS output exceeds declared size")
+                for k in range(count):
+                    value = ring[(index + k) & 4095]
+                    out.append(value)
+                    ring[cursor] = value
+                    cursor = (cursor + 1) & 4095
+    if len(out) != size or pos != len(data) or zlib.adler32(out) != checksum:
+        raise ValueError("LZSS length/checksum mismatch")
+    return bytes(out)
+
 def unpack_kernel(blob):
     tag, seq, end = adt.tlv(blob, 0)
     if tag != 0x30 or end != len(blob):
@@ -53,11 +98,13 @@ def unpack_kernel(blob):
     tag, raw, pos = adt.tlv(seq, pos)
     if tag != 4:
         raise ValueError("missing payload")
-    if raw.startswith((b"bvx2", b"bvx1", b"bvx-", b"bvxn")):
+    if raw.startswith(b"complzss"):
+        raw = unpack_lzss(raw)
+    elif raw.startswith((b"bvx2", b"bvx1", b"bvx-", b"bvxn")):
         import lzfse
         raw = lzfse.decompress(raw)
     if not raw.startswith(b"\xcf\xfa\xed\xfe") or len(raw) > 256 * 1024 * 1024:
-        raise ValueError("unsupported compressed/encrypted kernel or size")
+        raise ValueError(f"unsupported kernel payload: prefix={raw[:8].hex()} size={len(raw)}")
     return raw
 
 # Only collect identifiers relevant to the PCIe driver, not arbitrary firmware strings.
@@ -67,6 +114,10 @@ def inventory(raw):
 
 def main():
     assert inventory(b"\0AppleS8000PCIe\0unrelated\0AppleS8003PCIePort\0") == ["AppleS8000PCIe", "AppleS8003PCIePort"]
+    sample = b"ABCABC"
+    stream = b"\x07ABC\xee\xf0"
+    header = b"complzss" + struct.pack(">III", zlib.adler32(sample), len(sample), len(stream))
+    assert unpack_lzss(header.ljust(0x180, b"\0") + stream) == sample
     if "--selftest" in sys.argv:
         print("PASS restricted identifier inventory")
         return
@@ -83,6 +134,8 @@ def main():
                 raise ValueError("kernelcache member exceeds limit")
             blob = archive.read(item)
             entry = {"member": item.filename, "sha256": hashlib.sha256(blob).hexdigest()}
+            if entry["sha256"] != "a4feb2d8f1d751d338508942d49543f3cd67560ad2b4400b3c752e61c2860e07":
+                raise ValueError("kernelcache hash mismatch")
             try:
                 raw = unpack_kernel(blob)
                 entry["identifiers"] = inventory(raw)
