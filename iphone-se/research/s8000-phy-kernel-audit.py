@@ -112,6 +112,84 @@ PATTERN = re.compile(rb"[A-Za-z0-9_.$:]{0,40}AppleS800[03xX]PCIe[A-Za-z0-9_.$:]{
 def inventory(raw):
     return sorted({m.group().decode("ascii") for m in PATTERN.finditer(raw)})
 
+# Resolve literal addresses from bounded Mach-O segment mappings. Candidate
+# ADRP/ADD references are leads, not verified function entry points.
+TARGETS = (
+    b"AppleS8000PCIe::configure",
+    b"AppleS8000PCIePort::enablePortHardware",
+    b"AppleS800xPCIe::_readPhyIPReg",
+    b"AppleS800xPCIe::_writePhyIPReg",
+    b"AppleS8003PCIePort::enablePortHardware",
+)
+def macho_segments(raw):
+    if len(raw) < 32:
+        raise ValueError("short Mach-O")
+    magic, cpu, _, _, ncmds, total, _, _ = struct.unpack_from("<8I", raw)
+    if magic != 0xfeedfacf or cpu != 0x0100000c or ncmds > 4096 or total > len(raw)-32:
+        raise ValueError("unsupported Mach-O header")
+    pos = 32
+    segments = []
+    for _ in range(ncmds):
+        if pos+8 > 32+total:
+            raise ValueError("truncated load command")
+        cmd, size = struct.unpack_from("<II", raw, pos)
+        if size < 8 or pos+size > 32+total:
+            raise ValueError("bad load command bounds")
+        if cmd == 0x19:
+            if size < 72:
+                raise ValueError("short segment command")
+            _, _, name, vm, vs, off, fs, maxprot, prot, _, _ = struct.unpack_from("<II16sQQQQiiII", raw, pos)
+            if off+fs > len(raw) or fs > vs:
+                raise ValueError("invalid segment bounds")
+            if fs:
+                segments.append((name.rstrip(b"\0").decode("ascii"), vm, off, fs, prot))
+        pos += size
+    return segments
+
+def literal_refs(raw):
+    segs = macho_segments(raw)
+    targets = {}
+    for label in TARGETS:
+        start = 0
+        while (off := raw.find(label+b"\0", start)) >= 0:
+            for name, vm, base, size, prot in segs:
+                if base <= off < base+size:
+                    address = vm+off-base
+                    targets.setdefault(address, set()).add(label.decode())
+            start = off+len(label)
+    pages = {addr & ~4095 for addr in targets}
+    hits = []
+    for name, vm, off, size, prot in segs:
+        if not (prot & 4 or name == "__PRELINK_TEXT"):
+            continue
+        data = memoryview(raw)[off:off+(size&~3)]
+        for i, (word,) in enumerate(struct.iter_unpack("<I", data)):
+            if word & 0x9f000000 != 0x90000000:
+                continue
+            pc = vm+i*4
+            imm = ((word >> 29)&3) | (((word >> 5)&0x7ffff)<<2)
+            if imm & (1<<20):
+                imm -= 1<<21
+            page = (pc & ~4095)+(imm<<12)
+            if page not in pages:
+                continue
+            rd = word&31
+            # Restrict to immediately adjacent ADD to avoid untracked clobbers.
+            if (i+1)*4+4 > len(data):
+                continue
+            add, = struct.unpack_from("<I", data, (i+1)*4)
+            if add & 0xffc00000 != 0x91000000 or (add>>5)&31 != rd:
+                continue
+            addr = page+((add>>10)&0xfff)
+            if addr in targets:
+                hits.append({"segment":name,"adrp_pc":hex(pc),"string_address":hex(addr),"labels":sorted(targets[addr])})
+                if len(hits)>=256:
+                    raise ValueError("reference inventory exceeds cap")
+    return {"segments":[{"name":n,"vm":hex(v),"file_offset":hex(o),"size":s,"protection":p} for n,v,o,s,p in segs],
+            "mapped_literals":[{"address":hex(a),"labels":sorted(v)} for a,v in sorted(targets.items())],
+            "candidate_adjacent_adrp_add_refs":hits,
+            "limitations":"Heuristic literal references only; no function boundaries or register writes inferred."}
+
 def main():
     assert inventory(b"\0AppleS8000PCIe\0unrelated\0AppleS8003PCIePort\0") == ["AppleS8000PCIe", "AppleS8003PCIePort"]
     sample = b"ABCABC"
@@ -140,6 +218,10 @@ def main():
                 raw = unpack_kernel(blob)
                 entry["identifiers"] = inventory(raw)
                 entry["status"] = "inspected"
+                try:
+                    entry["literal_reference_inventory"] = literal_refs(raw)
+                except ValueError as exc:
+                    entry["reference_error"] = str(exc)
             except ValueError as exc:
                 entry["status"] = str(exc)
             results.append(entry)
