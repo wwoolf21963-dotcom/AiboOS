@@ -2,7 +2,7 @@ name: Build AiboOS OrchardLinux A9 kernel evaluation
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, wifi-n69u-bringup]
     paths:
       - '.github/workflows/build-orchard-a9.yml'
       - '.github/scripts/build-orchard-a9.sh'
