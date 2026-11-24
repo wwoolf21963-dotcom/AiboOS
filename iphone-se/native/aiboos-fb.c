@@ -106,7 +106,8 @@ static void render(struct screen *s) {
     rect(s,0,0,w,h,0x191328);
     rect(s,0,0,w,h/4,0x503058);
     rect(s,0,h/4-6,w,6,0xff8fbd);
-    text(s,24,25,"AIBOOS",5,0xff91c1);
+    text(s,24,25,"AIBO",5,0xff91c1);
+    text(s,144,25,"OS",5,0xffffff);
     text(s,206,25,"TM",2,0xff91c1);
     text(s,24,90,"NATIVE LINUX",k,0xffffff);
     text(s,24,h/3,"IPHONE SE 2016",k,0xffffff);
@@ -204,7 +205,8 @@ static void shell_page(struct screen *s,const struct switch_ui *u) {
     rect(s,0,0,w,h/5,bg==0x08060c?0x201326:0x503058);
     rect(s,0,h/5-4,w,4,0xff91c1);
     int brand_scale=w>=400?5:3;
-    text(s,16,18,"AIBOOS",brand_scale,0xff91c1);
+    text(s,16,18,"AIBO",brand_scale,0xff91c1);
+    text(s,16+24*brand_scale,18,"OS",brand_scale,0xffffff);
     text(s,18+36*brand_scale,18,"TM",2,0xff91c1);
     struct aiboos_power p={.capacity=-1};
     if(page==PAGE_POWER)p=power_sample("/sys");
@@ -423,6 +425,10 @@ static int selftest(void) {
     if (value != 0x112233u) return 2;
     render(&s);
     if (!buf[0] && !buf[1] && !buf[2]) return 3;
+    memcpy(&value, buf+(25*320+29)*4, 4);
+    if (value != 0xff91c1u) return 16;
+    memcpy(&value, buf+(25*320+149)*4, 4);
+    if (value != 0xffffffu) return 17;
     struct input_event ev={.type=EV_KEY,.code=KEY_VOLUMEUP,.value=1};
     if(navigate(PAGE_HOME,&ev)!=PAGE_CONNECTION) return 4;
     ev.value=2;
