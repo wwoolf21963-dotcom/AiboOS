@@ -74,7 +74,7 @@ def parse(raw):
     pos=0; budget=50000
     results={}
     # Only standard controller descriptions from public restore images.
-    wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage)([-_0-9]|$)",re.I)
+    wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage|wlan|wifi|wireless|bcm4345|hans)([-_,0-9]|$)",re.I)
     allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed"}
     def visit(parent,depth):
         nonlocal pos,budget
@@ -94,7 +94,7 @@ def parse(raw):
         name=props.get("name",b"").split(b"\0",1)[0].decode("ascii",errors="replace")
         if not name or "/" in name: raise ValueError("invalid node name")
         path=parent+"/"+name
-        if wanted.search(name.split("@")[0]):
+        if wanted.search(name.split("@")[0]) or any(wanted.search(x.split("@")[0]) for x in path.split("/") if x and x.startswith(("wlan", "wifi"))):
             results[path]={k:(v.rstrip(b"\0").decode("ascii",errors="replace").replace("\0",";") if k in {"compatible","status","device_type"} else v.hex()) for k,v in props.items() if k in allowed and len(v)<=4096}
         for _ in range(nc): visit(path,depth+1)
     visit("",0)
@@ -107,6 +107,10 @@ def selftest():
     raw=struct.pack("<II",1,1)+prop("name",b"device-tree\0")+child
     result=parse(raw)
     assert result=={"/device-tree/pcie0":{"reg":"01020304"}}
+    wifi=struct.pack("<II",4,0)+prop("name",b"wlan-pcie,bcm4345\0")+prop("compatible",b"wlan-pcie,bcm4345\0")+prop("function-device_wake",b"\x01\x00\x00\x00")+prop("mac-address",b"SECRET")
+    bridge=struct.pack("<II",1,1)+prop("name",b"pci-bridge1\0")+wifi
+    raw_wifi=struct.pack("<II",1,1)+prop("name",b"device-tree\0")+bridge
+    assert parse(raw_wifi)["/device-tree/pci-bridge1/wlan-pcie,bcm4345"]=={"compatible":"wlan-pcie,bcm4345","function-device_wake":"01000000"}
     for broken in [raw[:-1],b""]:
         try:parse(broken)
         except ValueError:pass
@@ -135,6 +139,6 @@ def main():
     print("PASS pinned public hardware metadata comparison")
     for board, nodes in reports.items():
         for path, props in nodes.items():
-            if "/apcie" in path or "dart-apcie" in path or "nvme-mmu" in path:
+            if any(term in path.lower() for term in ("apcie", "nvme-mmu", "wlan", "wifi", "bcm4345", "hans")):
                 print(board, path, json.dumps(props, sort_keys=True))
 if __name__=="__main__":main()
