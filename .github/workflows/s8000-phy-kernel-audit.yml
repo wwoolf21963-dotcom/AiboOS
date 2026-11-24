@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python iphone-se/research/s8000-phy-kernel-audit.py --selftest
-      - run: python -m pip install lzfse==0.4.2
+      - run: python -m pip install lzfse==0.4.2 capstone==5.0.3
       - run: python iphone-se/research/s8000-phy-kernel-audit.py
       - uses: actions/upload-artifact@v4
         with:
