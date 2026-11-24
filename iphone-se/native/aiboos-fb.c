@@ -481,10 +481,67 @@ static int bitset(const unsigned long *bits,unsigned code){
     unsigned width=sizeof(unsigned long)*8;
     return (bits[code/width]>>(code%width))&1UL;
 }
+#ifdef AIBO18_NATIVE
+/* Direct multitouch evdev, single-finger tap on slot zero. No controller
+ * access here: the kernel must expose a real INPUT_PROP_DIRECT device. */
+struct aibo_touch {
+    int enabled,slot,active,released,have_x,have_y,x,y;
+    struct input_absinfo ax,ay;
+};
+static int touch_open(int fd,struct aibo_touch *t){
+    unsigned long props[(INPUT_PROP_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
+    memset(t,0,sizeof(*t));
+    if(ioctl(fd,EVIOCGPROP(sizeof(props)),props)<0||!bitset(props,INPUT_PROP_DIRECT))return 0;
+    if(ioctl(fd,EVIOCGABS(ABS_MT_POSITION_X),&t->ax)<0||
+       ioctl(fd,EVIOCGABS(ABS_MT_POSITION_Y),&t->ay)<0||
+       t->ax.maximum<=t->ax.minimum||t->ay.maximum<=t->ay.minimum)return 0;
+    t->enabled=1;
+    return 1;
+}
+static int touch_scale(int v,struct input_absinfo a,int extent){
+    if(v<a.minimum)v=a.minimum;
+    if(v>a.maximum)v=a.maximum;
+    return (int)(((int64_t)v-a.minimum)*(extent-1)/((int64_t)a.maximum-a.minimum));
+}
+static int touch_tap(struct screen *s,struct switch_ui *u,int x,int y){
+    if(u->page!=PAGE_HOME)return 0;
+    int w=(int)s->w,h=(int)s->h,brand=w>=400?5:3;
+    int top=12+7*brand+12,cellh=(h-10-top)/5,cellw=w/4;
+    if(cellh<=0||cellw<=0||x<0||y<top||x>=4*cellw||y>=top+5*cellh)return 0;
+    int row=(y-top)/cellh,col=x/cellw;
+    int index=row==4?AIBO18_HOME_COUNT+col:row*4+col;
+    if(row!=4&&index>=AIBO18_HOME_COUNT)return 0;
+    u->selected=index;
+    struct input_event ev={.type=EV_KEY,.code=KEY_HOME,.value=1};
+    return navigate(u,&ev);
+}
+static int touch_event(struct screen *s,struct switch_ui *u,struct aibo_touch *t,const struct input_event *ev){
+    if(!t->enabled)return 0;
+    if(ev->type==EV_SYN&&ev->code==SYN_DROPPED){t->active=t->released=t->have_x=t->have_y=0;return 0;}
+    if(ev->type==EV_ABS){
+        if(ev->code==ABS_MT_SLOT)t->slot=ev->value;
+        else if(t->slot==0){
+            if(ev->code==ABS_MT_TRACKING_ID){
+                if(ev->value>=0){t->active=1;t->released=t->have_x=t->have_y=0;}
+                else if(t->active){t->active=0;t->released=1;}
+            }else if(ev->code==ABS_MT_POSITION_X){t->x=ev->value;t->have_x=1;}
+            else if(ev->code==ABS_MT_POSITION_Y){t->y=ev->value;t->have_y=1;}
+        }
+    }
+    if(ev->type==EV_SYN&&ev->code==SYN_REPORT&&t->released){
+        t->released=0;
+        if(t->have_x&&t->have_y)return touch_tap(s,u,touch_scale(t->x,t->ax,(int)s->w),touch_scale(t->y,t->ay,(int)s->h));
+    }
+    return 0;
+}
+#endif
 static volatile sig_atomic_t stopped;
 static void stop_ui(int sig) { (void)sig; stopped=1; }
 static int run_ui(struct screen *s) {
     struct pollfd inputs[48];
+#ifdef AIBO18_NATIVE
+    struct aibo_touch touches[48];
+#endif
     unsigned count=0;
     struct switch_ui u={.page=PAGE_HOME,.action=ACTION_SILENT,.sound=TONE_NONE,.position=-1};
     load_settings(&u);publish_silent(&u);
@@ -497,11 +554,15 @@ static int run_ui(struct screen *s) {
                 int fd=open(devices.gl_pathv[i],O_RDONLY|O_NONBLOCK|O_CLOEXEC);
                 if(fd<0)continue;
                 unsigned long bits[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
-                if(ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)<0||
-                   !(bitset(bits,KEY_VOLUMEUP)||bitset(bits,KEY_VOLUMEDOWN)||bitset(bits,KEY_HOME)||
-                     bitset(bits,KEY_HOMEPAGE)||bitset(bits,KEY_UP)||bitset(bits,KEY_DOWN)||bitset(bits,KEY_MUTE))){
-                    close(fd);continue;
-                }
+                int keys=ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)>=0&&
+                   (bitset(bits,KEY_VOLUMEUP)||bitset(bits,KEY_VOLUMEDOWN)||bitset(bits,KEY_HOME)||
+                    bitset(bits,KEY_HOMEPAGE)||bitset(bits,KEY_UP)||bitset(bits,KEY_DOWN)||bitset(bits,KEY_MUTE));
+#ifdef AIBO18_NATIVE
+                int touch=touch_open(fd,&touches[count]);
+                if(!keys&&!touch){close(fd);continue;}
+#else
+                if(!keys){close(fd);continue;}
+#endif
                 if(bitset(bits,KEY_MUTE)){
                     unsigned long state[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
                     if(ioctl(fd,EVIOCGKEY(sizeof(state)),state)>=0){
@@ -523,6 +584,9 @@ static int run_ui(struct screen *s) {
             for(unsigned i=0;i<count;i++)if(inputs[i].revents&POLLIN){
                 struct input_event ev;
                 while(read(inputs[i].fd,&ev,sizeof(ev))==(ssize_t)sizeof(ev)){
+#ifdef AIBO18_NATIVE
+                    if(touch_event(s,&u,&touches[i],&ev)){shell_page(s,&u);continue;}
+#endif
                     if(ev.type==EV_KEY&&ev.code==KEY_MUTE&&(ev.value==0||ev.value==1)){
                         int old=u.position;
                         int alert=set_switch(&u,ev.value,1,now_ms());
@@ -588,6 +652,11 @@ static int selftest(void) {
 #endif
     if(!navigate(&u,&ev)||u.page!=PAGE_HOME)return 21;
     launcher(&s,&u);
+#ifdef AIBO18_NATIVE
+    if(!touch_tap(&s,&u,40,50)||u.selected!=0||u.page!=PAGE_COUNT)return 23;
+    u.page=PAGE_HOME;
+    if(touch_tap(&s,&u,40,10))return 24;
+#endif
     memcpy(&value,buf+(12*320+19)*4,4);
     if(value!=0xff91c1u)return 22;
     if(set_switch(&u,0,0,0)||u.silent||u.toast) return 8;
