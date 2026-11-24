@@ -74,8 +74,8 @@ def parse(raw):
     pos=0; budget=50000
     results={}
     # Only standard controller descriptions from public restore images.
-    wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage|wlan|wifi|wireless|bcm4345|hans)([-_,0-9]|$)",re.I)
-    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed","apcie-phy-tunables","apcie-common-tunables","apcie-config-tunables","pcie-rc-tunables","apcie-port-tunables","phy-tunables","pcie-phy-tunables"}
+    wanted=re.compile(r"(^|[-_])(apcie|pcie|pci|nvme|nvmmu|ans|nand|dart|sart|storage|wlan|wifi|wireless|bcm4345|hans|multitouch|touchscreen|touch|z2|spi)([-_,0-9]|$)",re.I)
+    allowed={"compatible","reg","interrupts","interrupt-parent","status","device_type","#address-cells","#size-cells","ranges","vm-offset","vm-size","function-perst","function-clkreq","function-device_wake","error-reflector","fetch-config","diag-config","clock-gates","lane-config","num-lanes","link-speed","apcie-phy-tunables","apcie-common-tunables","apcie-config-tunables","pcie-rc-tunables","apcie-port-tunables","phy-tunables","pcie-phy-tunables","function-reset","function-irq","function-attn","function-power","function-power_ana","function-power_ldo","function-display_sync","spi-max-frequency","clock-frequency","firmware-name","device-id","sensor-type"}
     def visit(parent,depth):
         nonlocal pos,budget
         budget-=1
@@ -143,6 +143,6 @@ def main():
     print("PASS pinned public hardware metadata comparison")
     for board, nodes in reports.items():
         for path, props in nodes.items():
-            if any(term in path.lower() for term in ("apcie", "nvme-mmu", "wlan", "wifi", "bcm4345", "hans")):
+            if any(term in path.lower() for term in ("apcie", "nvme-mmu", "wlan", "wifi", "bcm4345", "hans", "multitouch", "touch", "spi")):
                 print(board, path, json.dumps(props, sort_keys=True))
 if __name__=="__main__":main()
